@@ -6,13 +6,13 @@ import shutil
 import sys
 import tempfile
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 
 from aswaxs_live.app.qt_runtime import suppress_glx_warning
 from aswaxs_live.app.theme import apply_tool_theme, fit_window_to_available_screen
 
 from .config import OnlineConfig
-from .engine import DEFAULT_V5_ROOT, OnlineReductionEngine, ensure_v5_importable
+from .engine import DEFAULT_V6_ROOT, OnlineReductionEngine, ensure_v6_importable
 from .workspace import OnlineAnalysisWorkspace
 from .zmq_receiver import ZmqReceiver
 
@@ -53,7 +53,7 @@ def export_experiments_to_canonical(
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    enqueue_file = QtCore.pyqtSignal(str, str, object)
+    enqueue_file = Signal(str, str, object)
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -83,7 +83,7 @@ class MainWindow(QtWidgets.QMainWindow):
         root.setContentsMargins(8, 8, 8, 6)
         root.setSpacing(5)
 
-        self.main_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         root.addWidget(self.main_splitter, 1)
         self.setup_scroll = QtWidgets.QScrollArea()
         self.setup_scroll.setWidgetResizable(True)
@@ -165,7 +165,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_layout.addLayout(action_row)
 
         self.analysis_workspace = OnlineAnalysisWorkspace(self)
-        self.analysis_workspace.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Expanding)
+        self.analysis_workspace.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Expanding)
         right_layout.addWidget(self.analysis_workspace, 1)
 
         status_strip = QtWidgets.QFrame()
@@ -183,14 +183,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_button.setText("Messages")
         self.log_button.setCheckable(True)
         self.log_button.setChecked(False)
-        self.log_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.log_button.setArrowType(QtCore.Qt.UpArrow)
+        self.log_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.log_button.setArrowType(QtCore.Qt.ArrowType.UpArrow)
         status_layout.addWidget(self.log_button)
         right_layout.addWidget(status_strip)
 
         self.log_box = QtWidgets.QPlainTextEdit(); self.log_box.setReadOnly(True); self.log_box.setMaximumBlockCount(5000)
         self.log_box.setMaximumHeight(130)
-        self.log_box.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont))
+        self.log_box.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont))
         self.log_box.hide()
         right_layout.addWidget(self.log_box)
 
@@ -203,27 +203,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_splitter.setSizes([0, 1200])
 
     def _build_menus(self) -> None:
-        self.setup_action = QtWidgets.QAction("Acquisition Setup...", self)
+        self.setup_action = QtGui.QAction("Acquisition Setup...", self)
         self.setup_action.setCheckable(True)
         self.setup_action.setShortcut(QtGui.QKeySequence("Ctrl+,"))
         self.setup_action.toggled.connect(self._set_setup_visible)
 
-        file_menu = self.menuBar().addMenu("File")
+        file_menu = self.file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(self.setup_action)
         file_menu.addSeparator()
         file_menu.addAction("Export Analysis HDF5...", self.export_session_h5)
         file_menu.addSeparator()
-        file_menu.addAction("Close", self.close, QtGui.QKeySequence.Close)
+        file_menu.addAction("Close", self.close, QtGui.QKeySequence.StandardKey.Close)
 
-        run_menu = self.menuBar().addMenu("Run")
+        run_menu = self.run_menu = self.menuBar().addMenu("Run")
         run_menu.addAction("Start Online Reduction", self.start)
         run_menu.addAction("Stop", self.stop)
 
-        self.messages_action = QtWidgets.QAction("Messages", self)
+        self.messages_action = QtGui.QAction("Messages", self)
         self.messages_action.setCheckable(True)
         self.messages_action.toggled.connect(self.log_button.setChecked)
         self.log_button.toggled.connect(self.messages_action.setChecked)
-        view_menu = self.menuBar().addMenu("View")
+        view_menu = self.view_menu = self.menuBar().addMenu("View")
         view_menu.addAction(self.setup_action)
         view_menu.addAction(self.messages_action)
 
@@ -234,7 +234,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_log_visible(self, visible: bool) -> None:
         self.log_box.setVisible(visible)
-        self.log_button.setArrowType(QtCore.Qt.DownArrow if visible else QtCore.Qt.UpArrow)
+        self.log_button.setArrowType(QtCore.Qt.ArrowType.DownArrow if visible else QtCore.Qt.ArrowType.UpArrow)
 
     def apply_setup_and_hide(self) -> None:
         try:
@@ -291,7 +291,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def start(self) -> None:
         try:
-            self.config = self._config_from_ui(); self._validate(self.config); ensure_v5_importable()
+            self.config = self._config_from_ui(); self._validate(self.config); ensure_v6_importable()
             self.config.save(SETTINGS_PATH)
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Cannot start", str(exc)); return
@@ -318,8 +318,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def stop(self) -> None:
         if self.receiver: self.receiver.stop()
-        if self.engine: QtCore.QMetaObject.invokeMethod(self.engine, "shutdown", QtCore.Qt.QueuedConnection)
-        self._append_log("Stop requested; finalizing V5 HDF5 outputs")
+        if self.engine: QtCore.QMetaObject.invokeMethod(self.engine, "shutdown", QtCore.Qt.ConnectionType.QueuedConnection)
+        self._append_log("Stop requested; finalizing V6 HDF5 outputs")
         self.stop_button.setEnabled(False)
         self.status_label.setText("Stopping and finalizing outputs...")
 
@@ -406,7 +406,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.receiver_thread is not None and self.receiver_thread.isRunning():
             self.receiver_thread.wait(2000)
         if self.engine is not None and self.engine_thread is not None and self.engine_thread.isRunning():
-            QtCore.QMetaObject.invokeMethod(self.engine, "shutdown", QtCore.Qt.BlockingQueuedConnection)
+            QtCore.QMetaObject.invokeMethod(self.engine, "shutdown", QtCore.Qt.ConnectionType.BlockingQueuedConnection)
             self.engine_thread.quit()
             self.engine_thread.wait(5000)
         self._temporary_session.cleanup()
@@ -419,4 +419,4 @@ def main() -> int:
     app.setApplicationName("FrameByFrame Online 1-D Reducer")
     app.setOrganizationName("ChemMatCARS")
     window = MainWindow(); window.show()
-    return app.exec_()
+    return app.exec()

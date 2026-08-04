@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import zmq
-from PyQt5 import QtCore
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 
 
 def parse_image_message(raw: bytes | str) -> tuple[Path, dict]:
@@ -20,17 +20,17 @@ def parse_image_message(raw: bytes | str) -> tuple[Path, dict]:
 
 
 class ZmqReceiver(QtCore.QObject):
-    image_received = QtCore.pyqtSignal(str, str, object)
-    status = QtCore.pyqtSignal(str)
-    error = QtCore.pyqtSignal(str)
-    stopped = QtCore.pyqtSignal()
+    image_received = Signal(str, str, object)
+    status = Signal(str)
+    error = Signal(str)
+    stopped = Signal()
 
     def __init__(self, endpoints: dict[str, str]) -> None:
         super().__init__()
         self.endpoints = dict(endpoints)
         self._running = False
 
-    @QtCore.pyqtSlot()
+    @Slot()
     def run(self) -> None:
         self._running = True
         context = zmq.Context()
@@ -65,7 +65,7 @@ class ZmqReceiver(QtCore.QObject):
             context.term()
             self.stopped.emit()
 
-    @QtCore.pyqtSlot()
+    @Slot()
     def stop(self) -> None:
         self._running = False
 

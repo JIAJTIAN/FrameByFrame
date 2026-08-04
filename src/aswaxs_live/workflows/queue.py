@@ -30,7 +30,7 @@ from aswaxs_live.reduction.stitching import (
 from aswaxs_live.reduction.xanos_export import export_analysis_h5_to_xanos_format
 
 
-DEFAULT_QUEUE_PATH = PROJECT_DIR / "aswaxs_v5_queue.json"
+DEFAULT_QUEUE_PATH = PROJECT_DIR / "aswaxs_v6_queue.json"
 REDUCED_FRAME_RE = re.compile(r"(?:\[(?P<label>[^\]]+)\]\s*)?Reduced frame\s+(?P<done>\d+)/(?P<total>\d+)")
 
 

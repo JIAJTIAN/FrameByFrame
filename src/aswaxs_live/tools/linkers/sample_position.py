@@ -40,6 +40,9 @@ def resolve_sample_position_app(path: str | Path | None = None) -> Path:
 def launch_sample_position_app(path: str | Path | None = None) -> subprocess.Popen[str]:
     script_path = resolve_sample_position_app(path)
     env = os.environ.copy()
+    env["QT_API"] = "pyqt5"
+    env.pop("QT_PLUGIN_PATH", None)
+    env.pop("QT_QPA_PLATFORM_PLUGIN_PATH", None)
     project_root = str(script_path.parent)
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join([project_root, existing_pythonpath]) if existing_pythonpath else project_root

@@ -2,6 +2,11 @@
 
 > in your own analysis
 
+Version 6 uses PySide6/Qt 6 exclusively for every first-party GUI. Matplotlib
+uses `backend_qtagg`, and the application selects `QT_API=pyside6` before
+loading Matplotlib, pyqtgraph, or pyFAI GUI code. PyQt5 and PyQt6 must not be
+loaded into the FrameByFrame process.
+
 FrameByFrame-ASWAXS is a GUI-first processing platform for turning raw
 SAXS/WAXS/ASAXS HDF5 detector frames into analysis-ready I(q) curves,
 provenance-rich analysis HDF5 files, XAnoS-compatible text exports, and
@@ -75,7 +80,7 @@ post-processing already-collected datasets.
 ## Project Layout
 
 ```text
-ASWAXS_reduction_pipeline_v5/
+ASWAXS_reduction_pipeline_v6/
   run_gui.py                  root launcher; run without entering scripts/
   pyproject.toml              installable application definition
   docs/                       user and architecture documentation
@@ -94,8 +99,24 @@ module path; launchers and subprocesses connect to those packages directly.
 
 ## Start the Application
 
-For a copied checkout, activate the Python environment and run from the project
-root:
+Version 6 is standardized on Python 3.10 and uses the existing `pydm-env`
+environment for FrameByFrame, XAnoS, and XModFit. Install the unified
+requirements from the project root:
+
+```powershell
+conda activate pydm-env
+python -m pip install -r requirements.txt
+python -m pip install -e .
+python run_gui.py
+```
+
+The shared environment contains both PySide6 and PyQt5, but they are never
+loaded in the same process. FrameByFrame selects PySide6; XAnoS and XModFit are
+started as separate subprocesses with `QT_API=pyqt5`. Because all three use the
+same `python.exe`, no interpreter environment variables are needed in this
+configuration.
+
+For a copied checkout that already has its dependencies installed:
 
 ```powershell
 python run_gui.py
@@ -126,6 +147,14 @@ aswaxs
 ```
 
 The older `python scripts/run_gui.py` route remains available for compatibility.
+
+XAnoS and XModFit remain separate sibling source installations. They are always
+launched in isolated subprocesses, so their Qt5 imports cannot mix with the
+FrameByFrame Qt6 process. With the shared Python 3.10 `pydm-env` environment,
+the linkers use the current `sys.executable` automatically. The per-tool
+`FRAMEBYFRAME_XANOS_PYTHON` and `FRAMEBYFRAME_XMODFIT_PYTHON` overrides remain
+available for unusual installations. Exported data paths are forwarded to the
+isolated hosts for automatic loading.
 
 The main dashboard `Tools` menu opens the HDF5 I-q viewer, HDF5 structure and
 metadata viewer, and the pyFAI PONI/mask setup GUI. These tools no longer require
@@ -188,17 +217,17 @@ which is also available from the GUI `Help` menu.
 
 ## Create PONI and Mask Files
 
-This project includes the HDF5-to-pyFAI setup GUI, so V5 can create calibration
+This project includes the HDF5-to-pyFAI setup GUI, so V6 can create calibration
 files as well as run live reduction.
 
 ```powershell
-python .\ASWAXS_reduction_pipeline_v5\scripts\run_pyfai_gui.py
+python .\ASWAXS_reduction_pipeline_v6\scripts\run_pyfai_gui.py
 ```
 
 Or start with an HDF5 file already loaded:
 
 ```powershell
-python .\ASWAXS_reduction_pipeline_v5\scripts\run_pyfai_gui.py `
+python .\ASWAXS_reduction_pipeline_v6\scripts\run_pyfai_gui.py `
   --file "path\to\AgBH_or_sample.h5"
 ```
 
@@ -212,11 +241,11 @@ parameters.
 From `C:\Users\jiajtian\Documents\Playground`:
 
 ```powershell
-python .\ASWAXS_reduction_pipeline_v5\scripts\run_reducer.py `
+python .\ASWAXS_reduction_pipeline_v6\scripts\run_reducer.py `
   --manifest .\ASWAXS_reduction_pipeline\outputs\FC_AuSiO2NP_60uL_min_Eig1M_reduced_no_fluorescence\sequence_manifest.csv `
   --poni "Y:\aswaxs\bera\Apr2026\Commissioning\FC_AgBH_11_919keV\Eig1M\calib.poni" `
   --mask "Y:\aswaxs\bera\Apr2026\Commissioning\FC_AgBH_11_919keV\Eig1M\mask.msk" `
-  --output-dir .\ASWAXS_reduction_pipeline_v5\outputs\real_data_smoke `
+  --output-dir .\ASWAXS_reduction_pipeline_v6\outputs\real_data_smoke `
   --sample-name FC_AuSiO2NP_ASWAXS_60uL_min `
   --gc-group 1 --air-group 2 --empty-group 3 --water-group 4 --sample-group 5 `
   --analysis-mode asaxs `
@@ -235,7 +264,7 @@ QC. A GUI-run task records its latest complete wall time under
 `/entry/reduction_timing`, including preparation, detector reduction, QC,
 averaging, finalization, stitching, and export.
 
-The V5 default is HDF5-only for reduced curves. Legacy `.dat` curve files are
+The V6 default is HDF5-only for reduced curves. Legacy `.dat` curve files are
 written only when `--write-text-output` is enabled.
 This smoke command intentionally replays only 2 frames from each group. Remove
 `--limit-energies` and `--limit-frames-per-group` when you want every collected
@@ -271,7 +300,7 @@ energy 2, group 1, frame 1
 Example:
 
 ```powershell
-python .\ASWAXS_reduction_pipeline_v5\scripts\run_reducer.py `
+python .\ASWAXS_reduction_pipeline_v6\scripts\run_reducer.py `
   --watch-dir "\\chemmat-c51\data_rw\aswaxs\bera\Apr2026\Commissioning\FC_AuSiO2NP_ASWAXS_60uL_min\Eig1M" `
   --pattern "*.h5" `
   --num-energies 15 `
@@ -279,7 +308,7 @@ python .\ASWAXS_reduction_pipeline_v5\scripts\run_reducer.py `
   --num-frames 100 `
   --poni ".\FC_ASWAXS\FC_AgBH_11_919keV\Eig1M\calib.poni" `
   --mask ".\FC_ASWAXS\FC_AgBH_11_919keV\Eig1M\mask.msk" `
-  --output-dir .\ASWAXS_reduction_pipeline_v5\outputs\live_run `
+  --output-dir .\ASWAXS_reduction_pipeline_v6\outputs\live_run `
   --sample-name FC_AuSiO2NP_ASWAXS_60uL_min `
   --analysis-mode asaxs `
   --gc-group 1 --air-group 2 --empty-group 3 --water-group 4 --sample-group 5
@@ -353,7 +382,7 @@ instead of waiting forever like online Kafka mode.
 
 ## Bluesky/Kafka Measurement Done Queue
 
-In v5, a Bluesky plan, callback, or Kafka bridge should append/publish a
+In v6, a Bluesky plan, callback, or Kafka bridge should append/publish a
 lightweight `measurement_done` message when one measurement is complete. The
 message is not treated as data. It becomes a reduction job and supplies beamline
 context:
@@ -365,15 +394,15 @@ context:
 Start the reducer worker in queue mode:
 
 ```powershell
-python .\ASWAXS_reduction_pipeline_v5\scripts\run_reducer.py `
-  --measurement-done-queue .\ASWAXS_reduction_pipeline_v5\outputs\beamline\measurement_done_queue.jsonl `
+python .\ASWAXS_reduction_pipeline_v6\scripts\run_reducer.py `
+  --measurement-done-queue .\ASWAXS_reduction_pipeline_v6\outputs\beamline\measurement_done_queue.jsonl `
   --pattern "*.h5" `
   --num-energies 1 `
   --num-groups 1 `
   --num-frames 1 `
   --poni ".\FC_ASWAXS\FC_AgBH_11_919keV\Pil300K\calib.poni" `
   --mask ".\FC_ASWAXS\FC_AgBH_11_919keV\Pil300K\mask.msk" `
-  --output-dir .\ASWAXS_reduction_pipeline_v5\outputs\beamline `
+  --output-dir .\ASWAXS_reduction_pipeline_v6\outputs\beamline `
   --sample-name sampleA `
   --analysis-mode saxs `
   --detector Pil300K
@@ -382,8 +411,8 @@ python .\ASWAXS_reduction_pipeline_v5\scripts\run_reducer.py `
 For a local test, append one reduction job manually:
 
 ```powershell
-python .\ASWAXS_reduction_pipeline_v5\scripts\write_measurement_done.py `
-  --queue .\ASWAXS_reduction_pipeline_v5\outputs\beamline\measurement_done_queue.jsonl `
+python .\ASWAXS_reduction_pipeline_v6\scripts\write_measurement_done.py `
+  --queue .\ASWAXS_reduction_pipeline_v6\outputs\beamline\measurement_done_queue.jsonl `
   --data-dir "C:\path\to\sampleA\Pil300K" `
   --uid "test-uid" `
   --scan-id 1 `
@@ -395,8 +424,8 @@ python .\ASWAXS_reduction_pipeline_v5\scripts\write_measurement_done.py `
 To bridge saved Kafka-like messages into the reducer queue for testing:
 
 ```powershell
-python .\ASWAXS_reduction_pipeline_v5\scripts\run_kafka_queue_bridge.py `
-  --queue .\ASWAXS_reduction_pipeline_v5\outputs\beamline\measurement_done_queue.jsonl `
+python .\ASWAXS_reduction_pipeline_v6\scripts\run_kafka_queue_bridge.py `
+  --queue .\ASWAXS_reduction_pipeline_v6\outputs\beamline\measurement_done_queue.jsonl `
   --replay-jsonl .\messages_from_beamline.jsonl
 ```
 
@@ -404,8 +433,8 @@ For a real Bluesky Kafka stream, run the bridge in a beamline environment with
 `bluesky-kafka` installed:
 
 ```powershell
-python .\ASWAXS_reduction_pipeline_v5\scripts\run_kafka_queue_bridge.py `
-  --queue .\ASWAXS_reduction_pipeline_v5\outputs\beamline\measurement_done_queue.jsonl `
+python .\ASWAXS_reduction_pipeline_v6\scripts\run_kafka_queue_bridge.py `
+  --queue .\ASWAXS_reduction_pipeline_v6\outputs\beamline\measurement_done_queue.jsonl `
   --bootstrap-servers "kafka-host:9092" `
   --topic "aswaxs.bluesky.documents"
 ```
@@ -423,7 +452,7 @@ Detector aliases from beamline metadata are normalized before this comparison:
 skip the other detector's queue message is normal; it should still process the
 matching message for its detector.
 
-The V5 GUI can launch this queue workflow too. In `Window 0`, enable
+The V6 GUI can launch this queue workflow too. In `Window 0`, enable
 `use sample task list` to make the reducer tail an internal task file instead
 of directly watching one folder. Enable `start Kafka bridge with reducer` when the
 same GUI session should also run `scripts/run_kafka_queue_bridge.py`. Then fill
@@ -439,8 +468,8 @@ Run the live curve viewer in another terminal and point it at the same reducer
 output directory:
 
 ```powershell
-python .\ASWAXS_reduction_pipeline_v5\scripts\run_viewer.py `
-  --output-dir .\ASWAXS_reduction_pipeline_v5\outputs\live_run
+python .\ASWAXS_reduction_pipeline_v6\scripts\run_viewer.py `
+  --output-dir .\ASWAXS_reduction_pipeline_v6\outputs\live_run
 ```
 
 The viewer reads the batch analysis HDF5 file by default. It first looks for
@@ -490,7 +519,7 @@ For an uninstalled copied checkout, run this from the project root:
 python run_gui.py
 ```
 
-The GUI remembers task-builder values in `aswaxs_v5_builder_settings.json` at
+The GUI remembers task-builder values in `aswaxs_v6_builder_settings.json` at
 the project root. That local settings file should remain outside published
 application changes.
 
@@ -566,7 +595,7 @@ not write to the same HDF5 at the same time. The GUI is the only writer for the
 combined HDF5: it refreshes `/entry/Pil300K`, `/entry/Eig1M`, and
 `/entry/stitched_averages` as new matching group averages appear.
 
-## Current V5 Boundary
+## Current V6 Boundary
 
 This project is the experimental beamline-server copy. The queue transport is a
 simple JSONL file so it can be tested now without requiring Kafka or a specific

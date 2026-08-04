@@ -10,15 +10,14 @@ from pathlib import Path
 from aswaxs_live.app.qt_runtime import suppress_glx_warning
 
 suppress_glx_warning()
-os.environ.setdefault("QT_API", "pyqt5")
 
-from PyQt5 import QtGui, QtWidgets
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 
 import matplotlib
-matplotlib.use("Qt5Agg")
+matplotlib.use("qtagg")
 import numpy as np
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 from pyFAI import load as load_poni
 
@@ -67,6 +66,10 @@ class PreprocessingWindow(QtWidgets.QMainWindow):
         self._build_ui()
         self._build_menus()
         apply_tool_theme(self)
+        self.tabs.tabBar().setUsesScrollButtons(False)
+        self.tabs.tabBar().setStyleSheet(
+            "QTabBar::tab { min-width: 70px; padding: 5px 8px; }"
+        )
         fit_window_to_available_screen(self, (1680, 1020), minimum=(900, 640))
         if initial_path:
             self.load_hdf5_file(initial_path)
@@ -88,8 +91,8 @@ class PreprocessingWindow(QtWidgets.QMainWindow):
         left_layout.setContentsMargins(8, 8, 8, 8)
         left_layout.setSpacing(10)
         left.setWidget(left_content)
-        left.setMinimumWidth(340)
-        left.setMaximumWidth(480)
+        left.setMinimumWidth(440)
+        left.setMaximumWidth(520)
         self.main_splitter.addWidget(left)
 
         figure_widget = QtWidgets.QWidget()
@@ -104,7 +107,7 @@ class PreprocessingWindow(QtWidgets.QMainWindow):
         self.main_splitter.addWidget(figure_widget)
         self.main_splitter.setStretchFactor(0, 0)
         self.main_splitter.setStretchFactor(1, 1)
-        self.main_splitter.setSizes([410, 1200])
+        self.main_splitter.setSizes([460, 1200])
 
         self.tabs = QtWidgets.QTabWidget()
         left_layout.addWidget(self.tabs, 1)
@@ -184,8 +187,8 @@ class PreprocessingWindow(QtWidgets.QMainWindow):
         self.load_layout.addWidget(box)
 
     def _build_menus(self) -> None:
-        file_menu = self.menuBar().addMenu("File")
-        file_menu.addAction("Open HDF5...", self._browse_hdf5, QtGui.QKeySequence.Open)
+        file_menu = self.file_menu = self.menuBar().addMenu("File")
+        file_menu.addAction("Open HDF5...", self._browse_hdf5, QtGui.QKeySequence.StandardKey.Open)
         file_menu.addAction("HDF5 Dataset Path...", self._edit_dataset_path)
         file_menu.addSeparator()
         file_menu.addAction("Load PONI...", self._load_poni_dialog)
@@ -193,9 +196,9 @@ class PreprocessingWindow(QtWidgets.QMainWindow):
         file_menu.addAction("Save Mask...", self._save_mask_dialog)
         file_menu.addAction("Save Radial I(q)...", self._save_current_radial_curve)
         file_menu.addSeparator()
-        file_menu.addAction("Close", self.close, QtGui.QKeySequence.Close)
+        file_menu.addAction("Close", self.close, QtGui.QKeySequence.StandardKey.Close)
 
-        view_menu = self.menuBar().addMenu("View")
+        view_menu = self.view_menu = self.menuBar().addMenu("View")
         for index, label in enumerate(("Load", "Calibrate", "Mask", "Integrate")):
             view_menu.addAction(label, lambda _checked=False, step=index: self._set_step(step))
 
@@ -741,4 +744,4 @@ def run_app(initial_path: str | None = None) -> int:
     app.setStyle("Fusion")
     window = PreprocessingWindow(initial_path=initial_path)
     window.show()
-    return app.exec_()
+    return app.exec()

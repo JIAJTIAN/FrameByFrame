@@ -5,7 +5,7 @@ import h5py
 from pyFAI.integrator.azimuthal import AzimuthalIntegrator
 
 from aswaxs_live.tools.online_reducer.config import OnlineConfig
-from aswaxs_live.tools.online_reducer.engine import ensure_v5_importable
+from aswaxs_live.tools.online_reducer.engine import ensure_v6_importable
 from aswaxs_live.tools.online_reducer.checkpoints import (
     read_checkpoint_uid,
     write_experiment_metadata,
@@ -44,8 +44,8 @@ def test_online_reducer_config_round_trip(tmp_path: Path) -> None:
     assert not hasattr(actual, "output_dir")
 
 
-def test_online_reducer_uses_embedded_v5_engine() -> None:
-    src = ensure_v5_importable()
+def test_online_reducer_uses_embedded_v6_engine() -> None:
+    src = ensure_v6_importable()
 
     assert (src / "aswaxs_live" / "reduction" / "live.py").is_file()
     from aswaxs_live.reduction.live import LivePipelineState, SequenceAssigner
@@ -61,7 +61,7 @@ def test_online_reducer_gui_does_not_embed_legacy_viewer() -> None:
 
     build_ui_source = inspect.getsource(MainWindow._build_ui)
 
-    assert "Open V5 curve viewer" not in build_ui_source
+    assert "Open V6 curve viewer" not in build_ui_source
     assert "viewer_button" not in build_ui_source
 
 

@@ -2,7 +2,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5 import QtWidgets
+from aswaxs_live.app.qt import QtWidgets
 
 from aswaxs_live.tools.iq_viewer.viewer import H5IqViewerDialog
 from aswaxs_live.tools.online_reducer.app import MainWindow as OnlineReducerWindow
@@ -10,8 +10,13 @@ from aswaxs_live.tools.pyfai_setup.gui import PreprocessingWindow
 from aswaxs_live.tools.rack_builder.app import RackBuilderDialog
 
 
+_APP: QtWidgets.QApplication | None = None
+
+
 def _app() -> QtWidgets.QApplication:
-    return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    global _APP
+    _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    return _APP
 
 
 def test_pyfai_setup_uses_four_clickable_guided_steps() -> None:
@@ -28,7 +33,7 @@ def test_pyfai_setup_uses_four_clickable_guided_steps() -> None:
     ]
     assert window.tabs.currentIndex() == 0
     assert not window.step_back_button.isEnabled()
-    file_menu = next(action.menu() for action in window.menuBar().actions() if action.text() == "File")
+    file_menu = window.file_menu
     assert "Open HDF5..." in [action.text() for action in file_menu.actions()]
     assert window.file_path_edit.isHidden()
     window.step_next_button.click()
@@ -74,7 +79,7 @@ def test_rack_editor_uses_compact_two_column_actions() -> None:
     editor = next(box for box in dialog.findChildren(QtWidgets.QGroupBox) if box.title() == "Selected Capillary")
     assert editor.maximumWidth() == 360
     assert dialog.minimumSizeHint().height() < 500
-    file_menu = next(action.menu() for action in dialog.findChild(QtWidgets.QMenuBar).actions() if action.text() == "File")
+    file_menu = dialog.file_menu
     assert "Rack Setup..." in [action.text() for action in file_menu.actions()]
     assert not hasattr(dialog, "group_count_spin")
     dialog.close()
@@ -86,7 +91,7 @@ def test_online_reducer_setup_is_accessed_from_file_menu() -> None:
     window.show()
     app.processEvents()
 
-    file_menu = next(action.menu() for action in window.menuBar().actions() if action.text() == "File")
+    file_menu = window.file_menu
     assert "Acquisition Setup..." in [action.text() for action in file_menu.actions()]
     assert not window.setup_scroll.isVisible()
     window.setup_action.setChecked(True)

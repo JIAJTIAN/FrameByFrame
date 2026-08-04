@@ -1,4 +1,4 @@
-﻿# Beamline Server Message Test
+# Beamline Server Message Test
 
 Run these commands on the beamline server or on a machine that can reach:
 
@@ -20,7 +20,7 @@ pip install pyzmq
 Try the common Bluesky ZMQ ports:
 
 ```powershell
-cd C:\Users\jiajtian\Documents\Playground\ASWAXS_reduction_pipeline_v5
+cd C:\Users\jiajtian\Documents\Playground\ASWAXS_reduction_pipeline_v6
 
 python scripts\print_zmq_messages.py --address tcp://164.54.169.92:5578 --timeout-seconds 120
 ```

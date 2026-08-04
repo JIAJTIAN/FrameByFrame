@@ -13,8 +13,8 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 import pyqtgraph as pg
-from PyQt5 import QtCore, QtGui, QtWidgets
 
 from aswaxs_live.tools.iq_viewer import H5IqViewerDialog
 from aswaxs_live.tools.iq_viewer import H5StructureViewerDialog
@@ -41,7 +41,7 @@ from aswaxs_live.workflows.queue import (
 from aswaxs_live.app.theme import fit_window_to_available_screen
 
 
-BUILDER_SETTINGS_PATH = PROJECT_DIR / "aswaxs_v5_builder_settings.json"
+BUILDER_SETTINGS_PATH = PROJECT_DIR / "aswaxs_v6_builder_settings.json"
 DETECTOR_PROGRESS_RE = re.compile(r"\b(Pil300K|Eig1M)\s+(\d+)/(\d+)\b")
 FRAME_STABILITY_HELP_PATH = PROJECT_DIR / "docs" / "frame_stability_qc.md"
 MONITOR_NAME_HINTS = ("pds", "pd", "i0", "ion", "monitor", "current", "diode", "counter", "ic")
@@ -204,13 +204,13 @@ class Hdf5FileListModel(QtCore.QAbstractListModel):
     def rowCount(self, parent: QtCore.QModelIndex = QtCore.QModelIndex()) -> int:  # noqa: N802
         return 0 if parent.isValid() else len(self.paths)
 
-    def data(self, index: QtCore.QModelIndex, role: int = QtCore.Qt.DisplayRole) -> object:
+    def data(self, index: QtCore.QModelIndex, role: int = QtCore.Qt.ItemDataRole.DisplayRole) -> object:
         if not index.isValid() or not 0 <= index.row() < len(self.paths):
             return None
         path = self.paths[index.row()]
-        if role == QtCore.Qt.DisplayRole:
+        if role == QtCore.Qt.ItemDataRole.DisplayRole:
             return _file_basename(path)
-        if role in {QtCore.Qt.ToolTipRole, QtCore.Qt.UserRole}:
+        if role in {QtCore.Qt.ItemDataRole.ToolTipRole, QtCore.Qt.ItemDataRole.UserRole}:
             return path
         return None
 
@@ -221,7 +221,7 @@ class Hdf5FileListModel(QtCore.QAbstractListModel):
 
 
 class Hdf5FileListView(QtWidgets.QListView):
-    textChanged = QtCore.pyqtSignal()
+    textChanged = Signal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -229,9 +229,9 @@ class Hdf5FileListView(QtWidgets.QListView):
         self.setModel(self.file_model)
         self.setAlternatingRowColors(True)
         self.setUniformItemSizes(True)
-        self.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
-        self.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
 
     def set_file_paths(self, paths: list[str]) -> None:
         self.file_model.set_paths([str(path) for path in paths if str(path).strip()])
@@ -245,10 +245,10 @@ class Hdf5FileListView(QtWidgets.QListView):
 
 
 class QueueTable(QtWidgets.QTableWidget):
-    row_move_requested = QtCore.pyqtSignal(int, int)
-    copy_requested = QtCore.pyqtSignal()
-    paste_requested = QtCore.pyqtSignal()
-    delete_requested = QtCore.pyqtSignal()
+    row_move_requested = Signal(int, int)
+    copy_requested = Signal()
+    paste_requested = Signal()
+    delete_requested = Signal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -256,8 +256,8 @@ class QueueTable(QtWidgets.QTableWidget):
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
-        self.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
-        self.setDefaultDropAction(QtCore.Qt.MoveAction)
+        self.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
+        self.setDefaultDropAction(QtCore.Qt.DropAction.MoveAction)
 
     def dropEvent(self, event: QtCore.QEvent) -> None:
         if self.locked:
@@ -271,13 +271,13 @@ class QueueTable(QtWidgets.QTableWidget):
             event.ignore()
             return
         source = source_rows[0].row()
-        target = self.rowAt(event.pos().y())
+        target = self.rowAt(event.position().toPoint().y())
         indicator = self.dropIndicatorPosition()
         if target < 0:
             target = self.rowCount()
-        elif indicator == QtWidgets.QAbstractItemView.BelowItem:
+        elif indicator == QtWidgets.QAbstractItemView.DropIndicatorPosition.BelowItem:
             target += 1
-        elif indicator == QtWidgets.QAbstractItemView.OnViewport:
+        elif indicator == QtWidgets.QAbstractItemView.DropIndicatorPosition.OnViewport:
             target = self.rowCount()
         if source < target:
             target -= 1
@@ -289,15 +289,15 @@ class QueueTable(QtWidgets.QTableWidget):
         if self.locked:
             event.ignore()
             return
-        if event.matches(QtGui.QKeySequence.Copy):
+        if event.matches(QtGui.QKeySequence.StandardKey.Copy):
             self.copy_requested.emit()
             event.accept()
             return
-        if event.matches(QtGui.QKeySequence.Paste):
+        if event.matches(QtGui.QKeySequence.StandardKey.Paste):
             self.paste_requested.emit()
             event.accept()
             return
-        if event.key() in {QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace}:
+        if event.key() in {QtCore.Qt.Key.Key_Delete, QtCore.Qt.Key.Key_Backspace}:
             self.delete_requested.emit()
             event.accept()
             return
@@ -317,12 +317,12 @@ class QueueTable(QtWidgets.QTableWidget):
 
 
 class TaskRunner(QtCore.QThread):
-    message = QtCore.pyqtSignal(str)
-    task_progress = QtCore.pyqtSignal(int, float, str)
-    task_started = QtCore.pyqtSignal(int)
-    task_finished = QtCore.pyqtSignal(int, bool, str, float, str)
-    task_skipped = QtCore.pyqtSignal(int, str)
-    all_done = QtCore.pyqtSignal()
+    message = Signal(str)
+    task_progress = Signal(int, float, str)
+    task_started = Signal(int)
+    task_finished = Signal(int, bool, str, float, str)
+    task_skipped = Signal(int, str)
+    all_done = Signal()
 
     def __init__(self, tasks: list[TaskSpec], indices: list[int], accepted_indices: list[int], *, run_any_status: bool = False) -> None:
         super().__init__()
@@ -396,7 +396,7 @@ class HelpDocumentDialog(QtWidgets.QDialog):
             "code { background: #eef1f5; color: #20242a; }"
         )
         layout.addWidget(self.browser)
-        close_button = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        close_button = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
         close_button.rejected.connect(self.close)
         layout.addWidget(close_button)
         try:
@@ -415,7 +415,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.queue_path = DEFAULT_QUEUE_PATH
         self.runner: TaskRunner | None = None
         self.queue_locked = False
-        self._queue_selection_mode = QtWidgets.QAbstractItemView.ExtendedSelection
+        self._queue_selection_mode = QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
         self.h5_iq_viewer: H5IqViewerDialog | None = None
         self.h5_structure_viewer: H5StructureViewerDialog | None = None
         self.pyfai_setup_window: QtWidgets.QMainWindow | None = None
@@ -690,79 +690,79 @@ class DashboardWindow(QtWidgets.QMainWindow):
         )
 
     def _build_actions(self) -> None:
-        self.new_queue_action = QtWidgets.QAction("New Queue", self)
+        self.new_queue_action = QtGui.QAction("New Queue", self)
         self.new_queue_action.triggered.connect(self.new_queue)
-        self.clear_queue_action = QtWidgets.QAction("Clear Queue", self)
+        self.clear_queue_action = QtGui.QAction("Clear Queue", self)
         self.clear_queue_action.triggered.connect(self.clear_queue)
-        self.open_queue_action = QtWidgets.QAction("Open Queue...", self)
+        self.open_queue_action = QtGui.QAction("Open Queue...", self)
         self.open_queue_action.triggered.connect(self.open_queue)
-        self.recover_results_action = QtWidgets.QAction("Recover Completed Results...", self)
+        self.recover_results_action = QtGui.QAction("Recover Completed Results...", self)
         self.recover_results_action.triggered.connect(self.recover_completed_results)
-        self.save_queue_action = QtWidgets.QAction("Save Queue", self)
+        self.save_queue_action = QtGui.QAction("Save Queue", self)
         self.save_queue_action.triggered.connect(self.save_queue)
-        self.save_queue_as_action = QtWidgets.QAction("Save Queue As...", self)
+        self.save_queue_as_action = QtGui.QAction("Save Queue As...", self)
         self.save_queue_as_action.triggered.connect(self.save_queue_as)
-        self.new_task_action = QtWidgets.QAction("New Task", self)
+        self.new_task_action = QtGui.QAction("New Task", self)
         self.new_task_action.triggered.connect(self.clear_builder)
-        self.add_folder_action = QtWidgets.QAction("Add Folder", self)
+        self.add_folder_action = QtGui.QAction("Add Folder", self)
         self.add_folder_action.triggered.connect(self.browse_raw_folder)
-        self.add_files_action = QtWidgets.QAction("Choose Raw HDF5 Files", self)
+        self.add_files_action = QtGui.QAction("Choose Raw HDF5 Files", self)
         self.add_files_action.triggered.connect(self.browse_raw_files)
-        self.add_to_queue_action = QtWidgets.QAction("Add Task to Queue", self)
+        self.add_to_queue_action = QtGui.QAction("Add Task to Queue", self)
         self.add_to_queue_action.triggered.connect(self.add_task_from_builder)
-        self.update_task_action = QtWidgets.QAction("Update Selected Task", self)
+        self.update_task_action = QtGui.QAction("Update Selected Task", self)
         self.update_task_action.triggered.connect(self.update_selected_task_from_builder)
-        self.edit_task_action = QtWidgets.QAction("Edit Task...", self)
+        self.edit_task_action = QtGui.QAction("Edit Task...", self)
         self.edit_task_action.triggered.connect(self.edit_selected_task)
-        self.duplicate_task_action = QtWidgets.QAction("Duplicate Task", self)
+        self.duplicate_task_action = QtGui.QAction("Duplicate Task", self)
         self.duplicate_task_action.setShortcut(QtGui.QKeySequence("Ctrl+D"))
         self.duplicate_task_action.triggered.connect(self.duplicate_selected_task)
-        self.remove_task_action = QtWidgets.QAction("Delete Task", self)
-        self.remove_task_action.setShortcut(QtGui.QKeySequence.Delete)
+        self.remove_task_action = QtGui.QAction("Delete Task", self)
+        self.remove_task_action.setShortcut(QtGui.QKeySequence.StandardKey.Delete)
         self.remove_task_action.triggered.connect(self.remove_selected_task)
-        self.copy_task_action = QtWidgets.QAction("Copy Task", self)
-        self.copy_task_action.setShortcut(QtGui.QKeySequence.Copy)
+        self.copy_task_action = QtGui.QAction("Copy Task", self)
+        self.copy_task_action.setShortcut(QtGui.QKeySequence.StandardKey.Copy)
         self.copy_task_action.triggered.connect(self.copy_selected_tasks)
-        self.paste_task_action = QtWidgets.QAction("Paste Task", self)
-        self.paste_task_action.setShortcut(QtGui.QKeySequence.Paste)
+        self.paste_task_action = QtGui.QAction("Paste Task", self)
+        self.paste_task_action.setShortcut(QtGui.QKeySequence.StandardKey.Paste)
         self.paste_task_action.triggered.connect(self.paste_tasks)
-        self.set_status_action = QtWidgets.QAction("Set Status...", self)
+        self.set_status_action = QtGui.QAction("Set Status...", self)
         self.set_status_action.triggered.connect(self.set_selected_task_status)
-        self.move_up_action = QtWidgets.QAction("Move Up", self)
+        self.move_up_action = QtGui.QAction("Move Up", self)
         self.move_up_action.triggered.connect(lambda: self.move_selected_task(-1))
-        self.move_down_action = QtWidgets.QAction("Move Down", self)
+        self.move_down_action = QtGui.QAction("Move Down", self)
         self.move_down_action.triggered.connect(lambda: self.move_selected_task(1))
-        self.run_selected_action = QtWidgets.QAction("Run Task", self)
+        self.run_selected_action = QtGui.QAction("Run Task", self)
         self.run_selected_action.triggered.connect(self.run_selected)
-        self.run_all_action = QtWidgets.QAction("Start Queue", self)
+        self.run_all_action = QtGui.QAction("Start Queue", self)
         self.run_all_action.triggered.connect(self.run_all)
-        self.stop_current_action = QtWidgets.QAction("Stop Queue", self)
+        self.stop_current_action = QtGui.QAction("Stop Queue", self)
         self.stop_current_action.triggered.connect(self.stop_current_queue)
-        self.open_output_action = QtWidgets.QAction("Open Output", self)
+        self.open_output_action = QtGui.QAction("Open Output", self)
         self.open_output_action.triggered.connect(self.open_selected_output)
-        self.h5_iq_viewer_action = QtWidgets.QAction("HDF5 I-q Plot Viewer", self)
+        self.h5_iq_viewer_action = QtGui.QAction("HDF5 I-q Plot Viewer", self)
         self.h5_iq_viewer_action.triggered.connect(self.open_h5_iq_viewer)
-        self.h5_structure_viewer_action = QtWidgets.QAction("HDF5 Structure / Metadata Viewer", self)
+        self.h5_structure_viewer_action = QtGui.QAction("HDF5 Structure / Metadata Viewer", self)
         self.h5_structure_viewer_action.triggered.connect(self.open_h5_structure_viewer)
-        self.online_reducer_action = QtWidgets.QAction("Online 1-D Reducer", self)
+        self.online_reducer_action = QtGui.QAction("Online 1-D Reducer", self)
         self.online_reducer_action.triggered.connect(self.open_online_reducer)
-        self.pyfai_setup_action = QtWidgets.QAction("pyFAI PONI / Mask Setup", self)
+        self.pyfai_setup_action = QtGui.QAction("pyFAI PONI / Mask Setup", self)
         self.pyfai_setup_action.triggered.connect(self.open_pyfai_setup)
-        self.sample_position_action = QtWidgets.QAction("Sample Position / Pair Planner", self)
+        self.sample_position_action = QtGui.QAction("Sample Position / Pair Planner", self)
         self.sample_position_action.triggered.connect(self.open_sample_position_planner)
-        self.xanos_components_action = QtWidgets.QAction("XAnoS Components", self)
+        self.xanos_components_action = QtGui.QAction("XAnoS Components", self)
         self.xanos_components_action.triggered.connect(self.open_xanos_components)
-        self.xmodfit_action = QtWidgets.QAction("XModFit", self)
+        self.xmodfit_action = QtGui.QAction("XModFit", self)
         self.xmodfit_action.triggered.connect(self.open_xmodfit)
-        self.send_to_xanos_action = QtWidgets.QAction("Send to XAnoS Components", self)
+        self.send_to_xanos_action = QtGui.QAction("Send to XAnoS Components", self)
         self.send_to_xanos_action.triggered.connect(self.send_selected_task_to_xanos)
-        self.frame_stability_help_action = QtWidgets.QAction("Frame Stability QC Guide", self)
+        self.frame_stability_help_action = QtGui.QAction("Frame Stability QC Guide", self)
         self.frame_stability_help_action.triggered.connect(self.open_frame_stability_help)
     def _build_menus(self) -> None:
         menu = self.menuBar()
-        file_menu = menu.addMenu("File")
+        file_menu = self.file_menu = menu.addMenu("File")
         file_menu.addAction(self.new_task_action)
-        raw_data_menu = file_menu.addMenu("Select Raw Data")
+        raw_data_menu = self.raw_data_menu = file_menu.addMenu("Select Raw Data")
         raw_data_menu.addAction(self.add_folder_action)
         raw_data_menu.addAction(self.add_files_action)
         file_menu.addSeparator()
@@ -773,7 +773,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction("Exit", self.close)
 
-        task_menu = menu.addMenu("Task")
+        task_menu = self.task_menu = menu.addMenu("Task")
         task_menu.addAction(self.edit_task_action)
         task_menu.addSeparator()
         task_menu.addActions([self.run_selected_action, self.run_all_action])
@@ -788,13 +788,13 @@ class DashboardWindow(QtWidgets.QMainWindow):
         task_menu.addAction(self.set_status_action)
         task_menu.addAction(self.remove_task_action)
 
-        view_menu = menu.addMenu("View")
+        view_menu = self.view_menu = menu.addMenu("View")
         for index, label in enumerate(["Task Builder", "Dashboard"]):
-            action = QtWidgets.QAction(label, self)
+            action = QtGui.QAction(label, self)
             action.triggered.connect(lambda _checked=False, tab=index: self.tabs.setCurrentIndex(tab))
             view_menu.addAction(action)
 
-        tools_menu = menu.addMenu("Tools")
+        tools_menu = self.tools_menu = menu.addMenu("Tools")
         tools_menu.addAction(self.h5_iq_viewer_action)
         tools_menu.addAction(self.h5_structure_viewer_action)
         tools_menu.addAction(self.online_reducer_action)
@@ -805,7 +805,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         tools_menu.addSeparator()
         tools_menu.addAction(self.pyfai_setup_action)
 
-        help_menu = menu.addMenu("Help")
+        help_menu = self.help_menu = menu.addMenu("Help")
         help_menu.addAction(self.frame_stability_help_action)
         help_menu.addSeparator()
         help_menu.addAction("About FrameByFrame-ASWAXS", self.about)
@@ -813,7 +813,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
     def _build_queue_toolbar(self) -> None:
         toolbar = self.addToolBar("Queue")
         toolbar.setMovable(False)
-        toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._add_toolbar_label(toolbar, "Task")
         toolbar.addAction(self.new_task_action)
         toolbar.addSeparator()
@@ -843,7 +843,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
 
-        self.dashboard_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.dashboard_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         layout.addWidget(self.dashboard_splitter, 1)
 
         queue_box = QtWidgets.QGroupBox("Queue")
@@ -859,18 +859,18 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.queue_table.setMinimumHeight(145)
         self.queue_table.setAlternatingRowColors(True)
         self.queue_table.setWordWrap(False)
-        self.queue_table.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self.queue_table.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.queue_table.verticalHeader().setVisible(False)
         self.queue_table.verticalHeader().setDefaultSectionSize(26)
         header = self.queue_table.horizontalHeader()
         header.setStretchLastSection(True)
-        header.setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
+        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
         for column, width in enumerate([280, 90, 150, 110, 210, 160, 420]):
             self.queue_table.setColumnWidth(column, width)
-        self.queue_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.queue_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.queue_table.setSelectionMode(self._queue_selection_mode)
-        self.queue_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.queue_table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.queue_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.queue_table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.queue_table.itemSelectionChanged.connect(self._sync_selection_from_table)
         self.queue_table.customContextMenuRequested.connect(self.show_queue_context_menu)
         self.queue_table.row_move_requested.connect(self.move_task_row)
@@ -1035,7 +1035,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
             button = QtWidgets.QPushButton(f"{step_index + 1}. {title}")
             button.setObjectName("BuilderStepButton")
             button.setFlat(True)
-            button.setCursor(QtCore.Qt.PointingHandCursor)
+            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
             button.setToolTip(f"Jump to step {step_index + 1}: {title}")
             button.clicked.connect(lambda _checked=False, index=step_index: self._builder_go_to_step(index))
             self.builder_step_buttons.append(button)
@@ -1059,7 +1059,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
             content_layout.addWidget(heading)
             scroll = QtWidgets.QScrollArea()
             scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+            scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
             scroll.setWidget(content)
             self.builder_stack.addWidget(scroll)
             return content, content_layout
@@ -1102,7 +1102,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         mode_row.addWidget(reduction_group, 1)
         mode_row.addWidget(detector_group, 1)
         type_panel_layout.addLayout(mode_row)
-        type_layout.addWidget(type_panel, 0, QtCore.Qt.AlignHCenter)
+        type_layout.addWidget(type_panel, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
         type_layout.addStretch(1)
 
         self.pil_files_edit = Hdf5FileListView()
@@ -1174,7 +1174,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
             [("Energies", self.energy_spin), ("Groups per energy", self.group_spin), ("Frames per measurement", self.frame_spin)]
         ):
             sequence_grid.addWidget(QtWidgets.QLabel(label), 0, column)
-            sequence_grid.addWidget(widget, 1, column, alignment=QtCore.Qt.AlignLeft)
+            sequence_grid.addWidget(widget, 1, column, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
             sequence_grid.setColumnStretch(column, 1)
         self.sequence_summary_label = QtWidgets.QLabel()
         self.sequence_summary_label.setObjectName("BuilderReview")
@@ -1184,7 +1184,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         output_form = QtWidgets.QFormLayout(output_group)
         output_form.addRow("Output folder (auto)", output_row)
         sequence_panel_layout.addWidget(output_group)
-        sequence_layout.addWidget(sequence_panel, 0, QtCore.Qt.AlignHCenter)
+        sequence_layout.addWidget(sequence_panel, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
         sequence_layout.addStretch(1)
         for spin in (self.energy_spin, self.group_spin, self.frame_spin):
             spin.valueChanged.connect(self._update_sequence_summary)
@@ -1253,13 +1253,13 @@ class DashboardWindow(QtWidgets.QMainWindow):
         calibration_help_button = QtWidgets.QToolButton()
         calibration_help_button.setText("Parameter Help")
         calibration_help_button.setCheckable(True)
-        calibration_help_button.setArrowType(QtCore.Qt.RightArrow)
-        calibration_help_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        calibration_help_button.setArrowType(QtCore.Qt.ArrowType.RightArrow)
+        calibration_help_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         calibration_help_button.toggled.connect(calibration_help.setVisible)
         calibration_help_button.toggled.connect(
-            lambda visible: calibration_help_button.setArrowType(QtCore.Qt.DownArrow if visible else QtCore.Qt.RightArrow)
+            lambda visible: calibration_help_button.setArrowType(QtCore.Qt.ArrowType.DownArrow if visible else QtCore.Qt.ArrowType.RightArrow)
         )
-        calibration_layout.addWidget(calibration_help_button, 0, QtCore.Qt.AlignLeft)
+        calibration_layout.addWidget(calibration_help_button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         calibration_layout.addWidget(calibration_help)
 
         detector_calibration = QtWidgets.QHBoxLayout()
@@ -1286,7 +1286,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         core_row.addWidget(self.core_limit_label)
         core_row.addStretch(1)
         common_form.addRow("CPU cores", core_row)
-        calibration_layout.addWidget(common_group, 0, QtCore.Qt.AlignLeft)
+        calibration_layout.addWidget(common_group, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         calibration_layout.addStretch(1)
 
         self.pair_table = QtWidgets.QTableWidget(0, 3)
@@ -1654,7 +1654,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
             empty_group=self._optional_group(self.empty_group_spin.value()),
             pairs=self._current_pair_rows(),
         )
-        if dialog.exec_() != QtWidgets.QDialog.Accepted:
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         result = dialog.result_payload()
         self.gc_group_spin.setValue(result.gc_group or 0)
@@ -2085,7 +2085,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.queue_table.setAcceptDrops(not locked)
         self.queue_table.setDragEnabled(not locked)
         self.queue_table.setSelectionMode(self._queue_selection_mode)
-        self.queue_table.setContextMenuPolicy(QtCore.Qt.NoContextMenu if locked else QtCore.Qt.CustomContextMenu)
+        self.queue_table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu if locked else QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         for action in [
             self.new_queue_action,
             self.clear_queue_action,
@@ -2105,7 +2105,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
             self.run_all_action,
         ]:
             action.setEnabled(not locked)
-        cursor = QtCore.Qt.ForbiddenCursor if locked else QtCore.Qt.ArrowCursor
+        cursor = QtCore.Qt.CursorShape.ForbiddenCursor if locked else QtCore.Qt.CursorShape.ArrowCursor
         self.queue_table.setCursor(cursor)
         self.queue_table.viewport().setCursor(cursor)
         self.queue_lock_label.setText(reason or "Queue locked while running. Use Stop Queue to interrupt.")
@@ -2409,10 +2409,10 @@ class DashboardWindow(QtWidgets.QMainWindow):
             self,
             "Clear Queue",
             "Remove all tasks from the queue?\n\nThis does not delete raw data or output files.",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
         )
-        if answer != QtWidgets.QMessageBox.Yes:
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         self.tasks.clear()
         self.active_run_indices = []
@@ -2515,7 +2515,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         menu.addAction(self.set_status_action)
         menu.addAction(self.remove_task_action)
         self._update_send_to_xanos_action()
-        menu.exec_(self.queue_table.viewport().mapToGlobal(position))
+        menu.exec(self.queue_table.viewport().mapToGlobal(position))
 
     def _update_send_to_xanos_action(self) -> None:
         index = self.selected_index()
@@ -2919,7 +2919,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
             return
 
         dialog = QtWidgets.QMessageBox(self)
-        dialog.setIcon(QtWidgets.QMessageBox.Information)
+        dialog.setIcon(QtWidgets.QMessageBox.Icon.Information)
         dialog.setWindowTitle("Reduction Complete")
         dialog.setText(f"{task.task_name} finished successfully.")
         dialog.setInformativeText(
@@ -2932,11 +2932,11 @@ class DashboardWindow(QtWidgets.QMainWindow):
         )
         next_button = dialog.addButton(
             "Open I-q Plot Viewer" if task.is_saxs_mode() else "Open XAnoS Components",
-            QtWidgets.QMessageBox.AcceptRole,
+            QtWidgets.QMessageBox.ButtonRole.AcceptRole,
         )
-        output_button = dialog.addButton("Open Output Folder", QtWidgets.QMessageBox.ActionRole)
-        dialog.addButton("Later", QtWidgets.QMessageBox.RejectRole)
-        dialog.exec_()
+        output_button = dialog.addButton("Open Output Folder", QtWidgets.QMessageBox.ButtonRole.ActionRole)
+        dialog.addButton("Later", QtWidgets.QMessageBox.ButtonRole.RejectRole)
+        dialog.exec()
         clicked = dialog.clickedButton()
         if clicked is next_button:
             if task.is_saxs_mode():
@@ -3230,7 +3230,7 @@ def main() -> int:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     window = DashboardWindow()
     window.show()
-    return app.exec_()
+    return app.exec()
 
 
 if __name__ == "__main__":

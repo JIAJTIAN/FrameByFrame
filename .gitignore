@@ -17,6 +17,8 @@ env/
 # Local GUI/user state
 .aswaxs_live_gui_settings.json
 .aswaxs_live_gui_settings.*.json
+aswaxs_v*_builder_settings.json
+aswaxs_v*_queue.json
 
 # Generated pipeline outputs and large data files
 outputs/

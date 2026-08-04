@@ -24,6 +24,9 @@ def test_launch_sample_position_app_uses_current_python(tmp_path: Path, monkeypa
         return FakeProcess()
 
     monkeypatch.setattr(sample_position_linker.subprocess, "Popen", fake_popen)
+    monkeypatch.setenv("QT_API", "pyside6")
+    monkeypatch.setenv("QT_PLUGIN_PATH", r"C:\wrong\qt6\plugins")
+    monkeypatch.setenv("QT_QPA_PLATFORM_PLUGIN_PATH", r"C:\wrong\qt6\platforms")
 
     process = sample_position_linker.launch_sample_position_app(script)
 
@@ -33,4 +36,7 @@ def test_launch_sample_position_app_uses_current_python(tmp_path: Path, monkeypa
     assert command[1] == str(script.resolve())
     assert cwd == str(tmp_path.resolve())
     assert str(tmp_path.resolve()) in env["PYTHONPATH"]
+    assert env["QT_API"] == "pyqt5"
+    assert "QT_PLUGIN_PATH" not in env
+    assert "QT_QPA_PLATFORM_PLUGIN_PATH" not in env
     assert text is True

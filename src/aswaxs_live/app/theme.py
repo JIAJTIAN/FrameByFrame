@@ -1,8 +1,8 @@
-"""Shared visual styling for the v5 scientific tool windows."""
+"""Shared visual styling for the v6 scientific tool windows."""
 
 from __future__ import annotations
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 
 
 PROFESSIONAL_TOOL_STYLESHEET = """

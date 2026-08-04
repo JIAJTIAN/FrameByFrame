@@ -1,1 +1,1 @@
-"""ASWAXS v3 live reduction package."""
+"""FrameByFrame-ASWAXS v6 package for Python 3.10."""

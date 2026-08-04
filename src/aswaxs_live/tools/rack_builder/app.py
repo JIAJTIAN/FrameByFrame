@@ -13,7 +13,7 @@ from aswaxs_live.app.qt_runtime import suppress_glx_warning
 
 suppress_glx_warning()
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 
 from aswaxs_live.app.theme import apply_tool_theme, fit_window_to_available_screen
 
@@ -45,7 +45,7 @@ class RackResult:
 
 
 class RackCanvas(QtWidgets.QWidget):
-    selectedChanged = QtCore.pyqtSignal(int)
+    selectedChanged = Signal(int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -61,7 +61,7 @@ class RackCanvas(QtWidgets.QWidget):
 
     def paintEvent(self, _event: QtGui.QPaintEvent) -> None:  # noqa: N802 - Qt override name.
         painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), self.palette().base())
         if not self.positions:
             return
@@ -70,7 +70,7 @@ class RackCanvas(QtWidgets.QWidget):
         rack_top = 92
         rack_height = 96
         painter.setPen(QtGui.QPen(QtGui.QColor("#111111"), 4))
-        painter.setBrush(QtCore.Qt.NoBrush)
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
         painter.drawRect(margin_x, rack_top, self.width() - 2 * margin_x, rack_height)
 
         slot_width = 18
@@ -90,10 +90,10 @@ class RackCanvas(QtWidgets.QWidget):
 
             painter.setPen(QtGui.QColor("#222222"))
             painter.setFont(QtGui.QFont("Arial", 8))
-            painter.drawText(QtCore.QRectF(center_x - 26, y + slot_height + 5, 52, 18), QtCore.Qt.AlignCenter, str(index + 1))
+            painter.drawText(QtCore.QRectF(center_x - 26, y + slot_height + 5, 52, 18), QtCore.Qt.AlignmentFlag.AlignCenter, str(index + 1))
             name = str(position.get("name", "")).strip()
             label = name if name else role
-            painter.drawText(QtCore.QRectF(center_x - 42, y - 26, 84, 22), QtCore.Qt.AlignCenter, label[:12])
+            painter.drawText(QtCore.QRectF(center_x - 42, y - 26, 84, 22), QtCore.Qt.AlignmentFlag.AlignCenter, label[:12])
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802 - Qt override name.
         if not self.positions:
@@ -160,11 +160,11 @@ class RackBuilderDialog(QtWidgets.QDialog):
 
         menu_bar = QtWidgets.QMenuBar(self)
         root.setMenuBar(menu_bar)
-        file_menu = menu_bar.addMenu("File")
+        file_menu = self.file_menu = menu_bar.addMenu("File")
         file_menu.addAction("Rack Setup...", self.configure_rack)
         file_menu.addAction("Clear Assignments", self.clear_assignments)
         file_menu.addSeparator()
-        file_menu.addAction("Close", self.reject, QtGui.QKeySequence.Close)
+        file_menu.addAction("Close", self.reject, QtGui.QKeySequence.StandardKey.Close)
 
         self.rack_summary_label = QtWidgets.QLabel("Rack: 13 positions")
         self.rack_summary_label.setObjectName("ToolStatus")
@@ -180,7 +180,7 @@ class RackBuilderDialog(QtWidgets.QDialog):
             legend.addWidget(QtWidgets.QLabel(role))
         legend.addStretch(1)
 
-        body = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        body = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         root.addWidget(body, 1)
 
         left = QtWidgets.QWidget()
@@ -192,8 +192,8 @@ class RackBuilderDialog(QtWidgets.QDialog):
         self.position_table = QtWidgets.QTableWidget(0, 4)
         self.position_table.setHorizontalHeaderLabels(["Group", "Role", "Name", "Solvent group"])
         self.position_table.horizontalHeader().setStretchLastSection(True)
-        self.position_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.position_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.position_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.position_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self.position_table.itemSelectionChanged.connect(self._table_selection_changed)
         self.position_table.itemChanged.connect(self._table_item_changed)
         left_layout.addWidget(self.position_table, 1)
@@ -237,7 +237,7 @@ class RackBuilderDialog(QtWidgets.QDialog):
         body.setStretchFactor(1, 1)
         body.setSizes([820, 300])
 
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
@@ -275,7 +275,7 @@ class RackBuilderDialog(QtWidgets.QDialog):
             "Clear Rack Assignments",
             "Clear all sample, solvent, GC, air, and empty assignments?",
         )
-        if answer != QtWidgets.QMessageBox.Yes:
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         self.positions = [{"role": ROLE_SKIP, "name": "", "solvent_group": 0} for _ in self.positions]
         self._refresh_table()
@@ -306,7 +306,7 @@ class RackBuilderDialog(QtWidgets.QDialog):
             self.position_table.setRowCount(len(self.positions))
             for row, position in enumerate(self.positions):
                 group_item = QtWidgets.QTableWidgetItem(str(row + 1))
-                group_item.setFlags(group_item.flags() & ~QtCore.Qt.ItemIsEditable)
+                group_item.setFlags(group_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
                 self.position_table.setItem(row, 0, group_item)
                 role_item = QtWidgets.QTableWidgetItem(str(position.get("role", ROLE_SKIP)))
                 self.position_table.setItem(row, 1, role_item)
@@ -401,7 +401,7 @@ def main() -> int:
     app = QtWidgets.QApplication(sys.argv)
     dialog = RackBuilderDialog()
     dialog.show()
-    return app.exec_()
+    return app.exec()
 
 
 if __name__ == "__main__":

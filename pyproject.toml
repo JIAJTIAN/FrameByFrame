@@ -4,24 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "framebyframe-aswaxs"
-version = "5.0.0"
+version = "6.0.0"
 description = "FrameByFrame-ASWAXS GUI platform for SAXS, WAXS, and ASAXS reduction"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.11"
 dependencies = [
     "fabio",
     "h5py",
     "matplotlib",
-    "numpy",
+    "numpy>=2.1,<2.4",
     "pyFAI",
+    "qtawesome",
     "pyqtgraph",
     "pyzmq",
-    "PyQt5",
+    "PySide6>=6.8,<6.9",
     "kafka-python",
     "bluesky-kafka",
 ]
 
-[project.gui-scripts]
+[project.scripts]
 framebyframe-aswaxs = "aswaxs_live.app.launcher:main"
 framebyframe = "aswaxs_live.app.launcher:main"
 aswaxs = "aswaxs_live.app.launcher:main"

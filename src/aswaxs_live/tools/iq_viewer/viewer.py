@@ -1,21 +1,18 @@
-"""Small read-only HDF5 inspection tools for the v5 dashboard."""
+"""Small read-only HDF5 inspection tools for the v6 dashboard."""
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-os.environ.setdefault("QT_API", "pyqt5")
-
 import h5py
 import numpy as np
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-from PyQt5 import QtCore, QtGui, QtWidgets
 
 from aswaxs_live.reduction.xanos_export import write_xanos_curve_file, xanos_curve_header_info
 from aswaxs_live.tools.iq_viewer.qc_widget import FrameStabilityWidget
@@ -86,8 +83,8 @@ class BackgroundCurve:
 
 
 class H5CurveLoadWorker(QtCore.QThread):
-    completed = QtCore.pyqtSignal(object, object)
-    failed = QtCore.pyqtSignal(str)
+    completed = Signal(object, object)
+    failed = Signal(str)
 
     def __init__(self, path: Path, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)
@@ -136,20 +133,20 @@ class H5IqViewerDialog(QtWidgets.QDialog):
 
         menu_bar = QtWidgets.QMenuBar(self)
         root.setMenuBar(menu_bar)
-        file_menu = menu_bar.addMenu("File")
-        file_menu.addAction("Open HDF5...", self.browse_file, QtGui.QKeySequence.Open)
-        self.load_button = QtWidgets.QAction("Reload", self)
-        self.load_button.setShortcut(QtGui.QKeySequence.Refresh)
+        file_menu = self.file_menu = menu_bar.addMenu("File")
+        file_menu.addAction("Open HDF5...", self.browse_file, QtGui.QKeySequence.StandardKey.Open)
+        self.load_button = QtGui.QAction("Reload", self)
+        self.load_button.setShortcut(QtGui.QKeySequence.StandardKey.Refresh)
         self.load_button.triggered.connect(self.load_file)
         file_menu.addAction(self.load_button)
         file_menu.addSeparator()
         file_menu.addAction("Export Selected XAnoS .dat...", self.export_selected_curves)
         file_menu.addAction("Export Pair Outputs...", self.export_pair_outputs)
         file_menu.addSeparator()
-        file_menu.addAction("Close", self.close, QtGui.QKeySequence.Close)
+        file_menu.addAction("Close", self.close, QtGui.QKeySequence.StandardKey.Close)
 
-        view_menu = menu_bar.addMenu("View")
-        self.curve_controls_action = QtWidgets.QAction("Curve Controls", self)
+        view_menu = self.view_menu = menu_bar.addMenu("View")
+        self.curve_controls_action = QtGui.QAction("Curve Controls", self)
         self.curve_controls_action.setCheckable(True)
         self.curve_controls_action.setChecked(True)
         self.curve_controls_action.toggled.connect(self._set_curve_controls_visible)
@@ -159,7 +156,7 @@ class H5IqViewerDialog(QtWidgets.QDialog):
         curves_page = QtWidgets.QWidget()
         curves_root = QtWidgets.QVBoxLayout(curves_page)
         curves_root.setContentsMargins(0, 0, 0, 0)
-        self.curves_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.curves_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         curves_root.addWidget(self.curves_splitter, 1)
         self.viewer_tabs.addTab(curves_page, "I-q Curves")
         self.frame_stability_widget = FrameStabilityWidget(self, show_file_controls=False, compact=True)
@@ -229,7 +226,9 @@ class H5IqViewerDialog(QtWidgets.QDialog):
         action_row.addWidget(export_button)
         left_layout.addLayout(action_row)
 
-        background_controls = QtWidgets.QHBoxLayout()
+        background_controls = QtWidgets.QGridLayout()
+        background_controls.setHorizontalSpacing(8)
+        background_controls.setVerticalSpacing(4)
         self.select_background_button = QtWidgets.QPushButton("Select Background")
         self.select_background_button.setMinimumWidth(138)
         self.select_background_button.clicked.connect(self.select_background)
@@ -243,14 +242,14 @@ class H5IqViewerDialog(QtWidgets.QDialog):
         self.background_factor_spin.setValue(0.99)
         self.background_factor_spin.valueChanged.connect(self.plot_selected)
         self.background_label = QtWidgets.QLabel("No background selected.")
-        self.background_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.background_label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        self.background_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.background_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self.background_label.setMinimumHeight(self.background_label.sizeHint().height())
-        background_controls.addWidget(self.select_background_button)
-        background_controls.addWidget(clear_background_button)
-        background_controls.addStretch(1)
-        background_controls.addWidget(QtWidgets.QLabel("Factor"))
-        background_controls.addWidget(self.background_factor_spin)
+        background_controls.addWidget(self.select_background_button, 0, 0)
+        background_controls.addWidget(clear_background_button, 0, 1)
+        background_controls.addWidget(QtWidgets.QLabel("Factor"), 1, 0)
+        background_controls.addWidget(self.background_factor_spin, 1, 1)
+        background_controls.setColumnStretch(2, 1)
         left_layout.addLayout(background_controls)
 
         background_label_row = QtWidgets.QHBoxLayout()
@@ -258,7 +257,7 @@ class H5IqViewerDialog(QtWidgets.QDialog):
         left_layout.addLayout(background_label_row)
 
         self.curve_list = QtWidgets.QListWidget()
-        self.curve_list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.curve_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.curve_list.itemClicked.connect(self._maybe_set_clicked_background)
         self.curve_list.itemDoubleClicked.connect(lambda _item: self.plot_selected())
         left_layout.addWidget(self.curve_list, 2)
@@ -269,11 +268,11 @@ class H5IqViewerDialog(QtWidgets.QDialog):
         self.pair_table = QtWidgets.QTableWidget(0, 4)
         self.pair_table.setHorizontalHeaderLabels(["Output name", "Sample", "Background", "Factor"])
         self.pair_table.horizontalHeader().setStretchLastSection(False)
-        self.pair_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
-        self.pair_table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
-        self.pair_table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
-        self.pair_table.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeToContents)
-        self.pair_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.pair_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.pair_table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.pair_table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.pair_table.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.pair_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.pair_table.setMaximumHeight(150)
         left_layout.addWidget(self.pair_table)
 
@@ -306,26 +305,26 @@ class H5IqViewerDialog(QtWidgets.QDialog):
 
         self.status_label = QtWidgets.QLabel("Choose an analysis HDF5 file.")
         self.status_label.setObjectName("ToolStatus")
-        self.status_label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        self.status_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self.status_label.setMinimumHeight(self.status_label.sizeHint().height())
         left_layout.addWidget(self.status_label)
         self.curves_splitter.addWidget(left)
 
         plot_panel = QtWidgets.QWidget()
         plot_panel.setMinimumSize(380, 380)
-        plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
         plot_layout = QtWidgets.QVBoxLayout(plot_panel)
         self.figure = Figure(figsize=(7.2, 7.2), dpi=110)
         self.figure.subplots_adjust(left=0.13, right=0.98, bottom=0.12, top=0.97)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setMinimumSize(380, 380)
-        self.canvas.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.canvas.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
         self.toolbar = NavigationToolbar(self.canvas, self)
         self.ax = self.figure.add_subplot(111)
         _apply_iq_axes_style(self.ax)
         self.coordinate_label = QtWidgets.QLabel("q: -, I: -")
-        self.coordinate_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.coordinate_label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        self.coordinate_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.coordinate_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self.coordinate_label.setMinimumHeight(self.coordinate_label.sizeHint().height())
         self.coordinate_label.setMaximumHeight(self.coordinate_label.sizeHint().height() + 4)
         plot_layout.addWidget(self.toolbar)
@@ -417,7 +416,7 @@ class H5IqViewerDialog(QtWidgets.QDialog):
             if needle and needle not in curve.label.lower() and needle not in curve.group_path.lower():
                 continue
             item = QtWidgets.QListWidgetItem(curve.label)
-            item.setData(QtCore.Qt.UserRole, index)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, index)
             self._style_curve_list_item(item, curve)
             self.curve_list.addItem(item)
         if select_first:
@@ -442,7 +441,7 @@ class H5IqViewerDialog(QtWidgets.QDialog):
     def _maybe_set_clicked_background(self, item: QtWidgets.QListWidgetItem) -> None:
         if not self._background_pick_mode:
             return
-        value = item.data(QtCore.Qt.UserRole)
+        value = item.data(QtCore.Qt.ItemDataRole.UserRole)
         if value is None:
             return
         self._set_background_from_record_index(int(value))
@@ -478,7 +477,7 @@ class H5IqViewerDialog(QtWidgets.QDialog):
         saved = set(self._saved_sample_selection)
         for row in range(self.curve_list.count()):
             item = self.curve_list.item(row)
-            record_index = item.data(QtCore.Qt.UserRole)
+            record_index = item.data(QtCore.Qt.ItemDataRole.UserRole)
             if record_index in saved and not self._is_background_record(self.curves[int(record_index)]):
                 item.setSelected(True)
         self.curve_list.blockSignals(False)
@@ -486,7 +485,7 @@ class H5IqViewerDialog(QtWidgets.QDialog):
     def _refresh_curve_list_marks(self) -> None:
         for row in range(self.curve_list.count()):
             item = self.curve_list.item(row)
-            record_index = item.data(QtCore.Qt.UserRole)
+            record_index = item.data(QtCore.Qt.ItemDataRole.UserRole)
             if record_index is None:
                 continue
             self._style_curve_list_item(item, self.curves[int(record_index)])
@@ -607,7 +606,7 @@ class H5IqViewerDialog(QtWidgets.QDialog):
             return
         elif len(selected) >= 2:
             current_item = self.curve_list.currentItem()
-            current_index = current_item.data(QtCore.Qt.UserRole) if current_item is not None else None
+            current_index = current_item.data(QtCore.Qt.ItemDataRole.UserRole) if current_item is not None else None
             sample_index = int(current_index) if current_index in selected else selected[0]
             background_candidates = [index for index in selected if index != sample_index]
             background_index = background_candidates[0]
@@ -721,7 +720,7 @@ class H5IqViewerDialog(QtWidgets.QDialog):
 
     def _selected_curve_indices(self) -> list[int]:
         rows = sorted({index.row() for index in self.curve_list.selectedIndexes()})
-        return [int(self.curve_list.item(row).data(QtCore.Qt.UserRole)) for row in rows]
+        return [int(self.curve_list.item(row).data(QtCore.Qt.ItemDataRole.UserRole)) for row in rows]
 
     def _append_pair_row(self, sample_index: int, background_index: int) -> None:
         sample = self.curves[sample_index]
@@ -735,11 +734,11 @@ class H5IqViewerDialog(QtWidgets.QDialog):
             QtWidgets.QTableWidgetItem(_compact_curve_label(background.label)),
             QtWidgets.QTableWidgetItem("1.0"),
         ]
-        items[1].setData(QtCore.Qt.UserRole, sample_index)
-        items[2].setData(QtCore.Qt.UserRole, background_index)
+        items[1].setData(QtCore.Qt.ItemDataRole.UserRole, sample_index)
+        items[2].setData(QtCore.Qt.ItemDataRole.UserRole, background_index)
         for column, item in enumerate(items):
             if column in {1, 2}:
-                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self.pair_table.setItem(row, column, item)
 
     def _pair_row_exists(self, sample_index: int, background_index: int) -> bool:
@@ -748,7 +747,7 @@ class H5IqViewerDialog(QtWidgets.QDialog):
             background_item = self.pair_table.item(row, 2)
             if sample_item is None or background_item is None:
                 continue
-            if sample_item.data(QtCore.Qt.UserRole) == sample_index and background_item.data(QtCore.Qt.UserRole) == background_index:
+            if sample_item.data(QtCore.Qt.ItemDataRole.UserRole) == sample_index and background_item.data(QtCore.Qt.ItemDataRole.UserRole) == background_index:
                 return True
         return False
 
@@ -764,8 +763,8 @@ class H5IqViewerDialog(QtWidgets.QDialog):
             factor_item = self.pair_table.item(row, 3)
             if sample_item is None or background_item is None:
                 continue
-            sample_index = sample_item.data(QtCore.Qt.UserRole)
-            background_index = background_item.data(QtCore.Qt.UserRole)
+            sample_index = sample_item.data(QtCore.Qt.ItemDataRole.UserRole)
+            background_index = background_item.data(QtCore.Qt.ItemDataRole.UserRole)
             if sample_index is None or background_index is None:
                 continue
             factor = _float_table_value(factor_item, 1.0)
@@ -868,11 +867,11 @@ class H5StructureViewerDialog(QtWidgets.QDialog):
         self.path_edit.hide()
         menu_bar = QtWidgets.QMenuBar(self)
         root.setMenuBar(menu_bar)
-        file_menu = menu_bar.addMenu("File")
-        file_menu.addAction("Open HDF5...", self.browse_file, QtGui.QKeySequence.Open)
-        file_menu.addAction("Reload", self.load_file, QtGui.QKeySequence.Refresh)
+        file_menu = self.file_menu = menu_bar.addMenu("File")
+        file_menu.addAction("Open HDF5...", self.browse_file, QtGui.QKeySequence.StandardKey.Open)
+        file_menu.addAction("Reload", self.load_file, QtGui.QKeySequence.StandardKey.Refresh)
         file_menu.addSeparator()
-        file_menu.addAction("Close", self.close, QtGui.QKeySequence.Close)
+        file_menu.addAction("Close", self.close, QtGui.QKeySequence.StandardKey.Close)
 
         search_row = QtWidgets.QHBoxLayout()
         self.search_edit = QtWidgets.QLineEdit()
@@ -882,7 +881,7 @@ class H5StructureViewerDialog(QtWidgets.QDialog):
         search_row.addWidget(self.search_edit, 1)
         root.addLayout(search_row)
 
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         root.addWidget(splitter, 1)
 
         self.tree = QtWidgets.QTreeWidget()
@@ -933,7 +932,7 @@ class H5StructureViewerDialog(QtWidgets.QDialog):
         try:
             with h5py.File(path, "r") as handle:
                 root = QtWidgets.QTreeWidgetItem(["/", "file", "", "", _attrs_preview(handle)])
-                root.setData(0, QtCore.Qt.UserRole, "/")
+                root.setData(0, QtCore.Qt.ItemDataRole.UserRole, "/")
                 self.tree.addTopLevelItem(root)
                 add_h5_children(root, handle, counter)
                 root.setExpanded(True)
@@ -951,7 +950,7 @@ class H5StructureViewerDialog(QtWidgets.QDialog):
             self.details_text.clear()
             return
         item = items[0]
-        path = item.data(0, QtCore.Qt.UserRole) or item.text(0)
+        path = item.data(0, QtCore.Qt.ItemDataRole.UserRole) or item.text(0)
         lines = [
             f"Path: {path}",
             f"Kind: {item.text(1)}",
@@ -1269,17 +1268,17 @@ def add_h5_children(parent: QtWidgets.QTreeWidgetItem, group: h5py.Group | h5py.
         counter["items"] += 1
         if isinstance(child, h5py.Group):
             item = QtWidgets.QTreeWidgetItem([name, "group", "", "", _attrs_preview(child)])
-            item.setData(0, QtCore.Qt.UserRole, child.name)
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, child.name)
             parent.addChild(item)
             add_h5_children(item, child, counter)
         elif isinstance(child, h5py.Dataset):
             item = QtWidgets.QTreeWidgetItem([name, "dataset", str(child.shape), str(child.dtype), _dataset_preview(child)])
-            item.setData(0, QtCore.Qt.UserRole, child.name)
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, child.name)
             parent.addChild(item)
             attrs = _attrs_preview(child)
             if attrs:
                 attrs_item = QtWidgets.QTreeWidgetItem(["@attrs", "attrs", "", "", attrs])
-                attrs_item.setData(0, QtCore.Qt.UserRole, child.name + "/@attrs")
+                attrs_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, child.name + "/@attrs")
                 item.addChild(attrs_item)
 
 

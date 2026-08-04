@@ -9,7 +9,7 @@ from typing import TextIO
 
 import numpy as np
 import h5py
-from PyQt5 import QtCore
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 
 from aswaxs_live.reduction.analysis_h5 import file_sha256
 
@@ -18,12 +18,12 @@ from .config import OnlineConfig
 from .identity import ExperimentIdentity, resolve_experiment_identity
 
 
-DEFAULT_V5_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_V6_ROOT = Path(__file__).resolve().parents[4]
 ONLINE_MAX_MEASUREMENTS = 1_000_000
 
 
-def ensure_v5_importable(v5_root: Path = DEFAULT_V5_ROOT) -> Path:
-    src = v5_root.resolve() / "src"
+def ensure_v6_importable(v6_root: Path = DEFAULT_V6_ROOT) -> Path:
+    src = v6_root.resolve() / "src"
     engine_path = src / "aswaxs_live" / "reduction" / "live.py"
     if not engine_path.is_file():
         raise FileNotFoundError(f"FrameByFrame-ASWAXS source was not found at {src}")
@@ -44,31 +44,31 @@ class DetectorRuntime:
 
 
 class OnlineReductionEngine(QtCore.QObject):
-    log = QtCore.pyqtSignal(str)
-    progress = QtCore.pyqtSignal(str, int, int, int, int)
-    curve_ready = QtCore.pyqtSignal(object)
-    image_ready = QtCore.pyqtSignal(str, object, object)
-    experiment_discovered = QtCore.pyqtSignal(object)
-    output_updated = QtCore.pyqtSignal(str)
-    error = QtCore.pyqtSignal(str)
-    ready = QtCore.pyqtSignal()
-    stopped = QtCore.pyqtSignal()
+    log = Signal(str)
+    progress = Signal(str, int, int, int, int)
+    curve_ready = Signal(object)
+    image_ready = Signal(str, object, object)
+    experiment_discovered = Signal(object)
+    output_updated = Signal(str)
+    error = Signal(str)
+    ready = Signal()
+    stopped = Signal()
 
-    def __init__(self, config: OnlineConfig, session_dir: Path, v5_root: Path = DEFAULT_V5_ROOT) -> None:
+    def __init__(self, config: OnlineConfig, session_dir: Path, v6_root: Path = DEFAULT_V6_ROOT) -> None:
         super().__init__()
         self.config = config
         self.session_dir = Path(session_dir).expanduser().resolve()
-        self.v5_root = v5_root
+        self.v6_root = v6_root
         self._runtimes: dict[tuple[str, str], DetectorRuntime] = {}
         self._announced_experiments: set[str] = set()
         self._active = False
         self._reducer = None
         self._core = None
 
-    @QtCore.pyqtSlot()
+    @Slot()
     def initialize(self) -> None:
         try:
-            ensure_v5_importable(self.v5_root)
+            ensure_v6_importable(self.v6_root)
             from aswaxs_live.reduction import live as reducer
 
             self._reducer = reducer
@@ -78,7 +78,7 @@ class OnlineReductionEngine(QtCore.QObject):
             self.log.emit("FrameByFrame online 1-D reduction engine is ready")
             self.ready.emit()
         except Exception as exc:
-            self.error.emit(f"Could not initialize V5 engine: {exc}")
+            self.error.emit(f"Could not initialize V6 engine: {exc}")
 
     def _make_runtime(self, identity: ExperimentIdentity, detector: str) -> DetectorRuntime:
         reducer = self._reducer
@@ -113,7 +113,7 @@ class OnlineReductionEngine(QtCore.QObject):
         state.image_callback = lambda item, image, name=detector, experiment=identity: self._emit_image_preview(
             name, item, image, experiment
         )
-        # Restore V5's pending curves, completed averages, and sequence position.
+        # Restore V6's pending curves, completed averages, and sequence position.
         # Advancing the counter alone would lose unfinished group state.
         resume_items = reducer.compatible_resume_items_or_quarantine(analysis_path, self._core, args)
         seen: set[Path] = set()
@@ -166,7 +166,7 @@ class OnlineReductionEngine(QtCore.QObject):
         args.analysis_write_interval_groups = 1
         return args
 
-    @QtCore.pyqtSlot(str, str, object)
+    @Slot(str, str, object)
     def process_file(self, detector: str, path_text: str, _payload: object = None) -> None:
         if not self._active:
             return
@@ -352,7 +352,7 @@ class OnlineReductionEngine(QtCore.QObject):
         self.log.emit(f"{identity.title}: updated stitched 1-D detector averages -> {combined.name}")
         self.output_updated.emit(str(combined))
 
-    @QtCore.pyqtSlot()
+    @Slot()
     def shutdown(self) -> None:
         self._active = False
         identities = {runtime.identity.experiment_uid: runtime.identity for runtime in self._runtimes.values()}

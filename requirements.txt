@@ -1,10 +1,25 @@
+# Unified Python 3.10 environment for FrameByFrame v6, XAnoS, and XModFit.
+# FrameByFrame loads only PySide6. PyQt5 is used only by the isolated external
+# XAnoS and XModFit subprocesses; the two bindings must never share a process.
 fabio
 h5py
 matplotlib
-numpy
+numpy>=2.1,<2.4
 pyFAI
+qtawesome
 pyqtgraph
 pyzmq
-PyQt5
+PySide6>=6.8,<6.9
+PyQt5>=5.15,<5.16
 kafka-python
 bluesky-kafka
+scipy
+lmfit
+periodictable
+pandas
+python-docx
+tabulate
+corner
+statsmodels
+xraydb
+pylint>=2.17,<3
