@@ -51,11 +51,11 @@ Try the current local default topic from the old publisher config:
 ```powershell
 python scripts\print_kafka_messages.py `
   --bootstrap-servers 164.54.169.92:9092 `
-  --topic asaxs.frames `
+  --topic bluesky_aswaxs `
   --timeout-ms 120000
 ```
 
-If the beamline uses a different topic, replace `asaxs.frames`.
+If the beamline uses a different topic, replace `bluesky_aswaxs`.
 
 ## What To Send Back
 

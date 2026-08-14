@@ -23,12 +23,17 @@ class OnlineConfig:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        tmp.replace(path)
 
     @classmethod
     def load(cls, path: Path) -> "OnlineConfig":
         if not path.is_file():
             return cls()
-        values = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            values = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return cls()
         known = cls.__dataclass_fields__
         return cls(**{key: value for key, value in values.items() if key in known})

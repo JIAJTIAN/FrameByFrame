@@ -418,7 +418,15 @@ def main() -> int:
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setApplicationName("XModFit (FrameByFrame isolated host)")
-    open_xmodfit_window(args.script, data_files=args.data)
+    try:
+        open_xmodfit_window(args.script, data_files=args.data)
+    except Exception as exc:  # noqa: BLE001
+        QtWidgets.QMessageBox.critical(
+            None,
+            "XModFit Failed to Open",
+            f"XModFit could not be started.\n\n{exc}",
+        )
+        return 1
     return app.exec_()
 
 

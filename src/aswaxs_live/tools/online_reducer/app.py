@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 import re
 import shutil
@@ -67,6 +68,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.receiver = None
         self.engine_thread = None
         self.engine = None
+        # Per-detector: epoch seconds of last successfully received message.
+        self._last_received: dict[str, float] = {}
+        # Per-detector: total messages received this session.
+        self._message_counts: dict[str, int] = {}
+        # Per-detector: endpoint string (set when receiver starts).
+        self._endpoints: dict[str, str] = {}
         self._build_ui()
         self._build_menus()
         self._load_config_into_ui()
@@ -145,7 +152,7 @@ class MainWindow(QtWidgets.QMainWindow):
         form_root.addWidget(seq_group)
 
         form_root.addStretch()
-        self.apply_setup_button = QtWidgets.QPushButton("Apply Setup && Hide")
+        self.apply_setup_button = QtWidgets.QPushButton("Save && Close Setup")
         self.apply_setup_button.setObjectName("PrimaryActionButton")
         self.apply_setup_button.setMinimumHeight(38)
         self.apply_setup_button.setToolTip("Validate and save these settings, then close the entire setup panel.")
@@ -176,7 +183,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_labels: dict[str, QtWidgets.QLabel] = {}
         status_layout.addWidget(self.status_label, 1)
         for detector, display_name in (("Pil300K", "SAXS"), ("Eig1M", "WAXS")):
-            label = QtWidgets.QLabel(f"{display_name}: 0 received | M0 F0")
+            label = QtWidgets.QLabel(f"{display_name}: idle")
+            label.setToolTip(f"{detector}: no endpoint configured yet")
             self.progress_labels[detector] = label
             status_layout.addWidget(label)
         self.log_button = QtWidgets.QToolButton()
@@ -188,8 +196,11 @@ class MainWindow(QtWidgets.QMainWindow):
         status_layout.addWidget(self.log_button)
         right_layout.addWidget(status_strip)
 
+        self._status_refresh_timer = QtCore.QTimer(self)
+        self._status_refresh_timer.setInterval(3000)
+        self._status_refresh_timer.timeout.connect(self._refresh_status_labels)
+
         self.log_box = QtWidgets.QPlainTextEdit(); self.log_box.setReadOnly(True); self.log_box.setMaximumBlockCount(5000)
-        self.log_box.setMaximumHeight(130)
         self.log_box.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont))
         self.log_box.hide()
         right_layout.addWidget(self.log_box)
@@ -216,7 +227,7 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addAction("Close", self.close, QtGui.QKeySequence.StandardKey.Close)
 
         run_menu = self.run_menu = self.menuBar().addMenu("Run")
-        run_menu.addAction("Start Online Reduction", self.start)
+        self.start_action = run_menu.addAction("Start Online Reduction", self.start)
         run_menu.addAction("Stop", self.stop)
 
         self.messages_action = QtGui.QAction("Messages", self)
@@ -310,13 +321,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _start_receiver(self) -> None:
         endpoints = {"Pil300K": self.config.saxs_endpoint, "Eig1M": self.config.waxs_endpoint}
+        self._endpoints = dict(endpoints)
+        self._last_received.clear()
+        self._message_counts.clear()
         self.receiver_thread = QtCore.QThread(self); self.receiver = ZmqReceiver(endpoints)
         self.receiver.moveToThread(self.receiver_thread); self.receiver_thread.started.connect(self.receiver.run)
-        self.receiver.image_received.connect(self.enqueue_file); self.receiver.status.connect(self._append_log); self.receiver.error.connect(self._on_error)
+        self.receiver.image_received.connect(self.enqueue_file)
+        self.receiver.message_stats.connect(self._on_message_stats)
+        self.receiver.status.connect(self._append_log)
+        self.receiver.error.connect(self._on_error)
         self.receiver.stopped.connect(self.receiver_thread.quit); self.receiver_thread.start()
+        for detector, endpoint in endpoints.items():
+            label = self.progress_labels.get(detector)
+            if label is not None:
+                label.setToolTip(endpoint)
+        self._status_refresh_timer.start()
         self.status_label.setText("Listening and reducing")
 
     def stop(self) -> None:
+        self._status_refresh_timer.stop()
         if self.receiver: self.receiver.stop()
         if self.engine: QtCore.QMetaObject.invokeMethod(self.engine, "shutdown", QtCore.Qt.ConnectionType.QueuedConnection)
         self._append_log("Stop requested; finalizing V6 HDF5 outputs")
@@ -329,6 +352,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_running(self, running: bool) -> None:
         self.start_button.setEnabled(not running); self.stop_button.setEnabled(running); self.config_panel.setEnabled(not running)
+        self.start_action.setEnabled(not running)
         self.export_button.setEnabled(not running and bool(self._available_session_h5()))
         self.setup_action.setToolTip(
             "Show setup values (read-only while reduction is running)."
@@ -367,13 +391,47 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_box.appendPlainText(text)
 
     def _on_error(self, text: str) -> None:
-        self._append_log("ERROR: " + text); self.status_label.setText("Error - see log")
+        self._append_log("ERROR: " + text)
+        self.status_label.setText(f"Error: {text[:120]}")
+        if not self.log_box.isVisible():
+            self.log_button.setChecked(True)
+
+    def _on_message_stats(self, detector: str, count: int, endpoint: str) -> None:
+        self._last_received[detector] = time.monotonic()
+        self._message_counts[detector] = count
+        label = self.progress_labels.get(detector)
+        if label is not None:
+            display_name = "SAXS" if detector == "Pil300K" else "WAXS"
+            label.setText(f"{display_name}: {count} received | just now")
+
+    def _refresh_status_labels(self) -> None:
+        now = time.monotonic()
+        for detector, label in self.progress_labels.items():
+            display_name = "SAXS" if detector == "Pil300K" else "WAXS"
+            count = self._message_counts.get(detector, 0)
+            last = self._last_received.get(detector)
+            if last is None:
+                endpoint = self._endpoints.get(detector, "")
+                label.setText(f"{display_name}: listening" + (f" ({endpoint})" if endpoint else ""))
+            else:
+                elapsed = int(now - last)
+                if elapsed < 5:
+                    age = "just now"
+                elif elapsed < 60:
+                    age = f"{elapsed}s ago"
+                else:
+                    age = f"{elapsed // 60}m ago"
+                label.setText(f"{display_name}: {count} received | last: {age}")
 
     def _on_progress(self, detector: str, sequence: int, energy: int, group: int, frame: int) -> None:
         display_name = "SAXS" if detector == "Pil300K" else "WAXS"
+        count = self._message_counts.get(detector, sequence)
+        last = self._last_received.get(detector)
         label = self.progress_labels.get(detector)
         if label is not None:
-            label.setText(f"{display_name}: {sequence} received | M{group} F{frame}")
+            age = "just now" if last is not None and (time.monotonic() - last) < 5 else ""
+            suffix = f" | last: {age}" if age else f" | M{group} F{frame}"
+            label.setText(f"{display_name}: {count} received{suffix}")
 
     def _restore_window_layout(self) -> None:
         settings = QtCore.QSettings()
@@ -400,6 +458,7 @@ class MainWindow(QtWidgets.QMainWindow):
         settings.endGroup()
 
     def closeEvent(self, event) -> None:
+        self._status_refresh_timer.stop()
         self._save_window_layout()
         if self.receiver is not None:
             self.receiver.stop()

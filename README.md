@@ -435,8 +435,8 @@ For a real Bluesky Kafka stream, run the bridge in a beamline environment with
 ```powershell
 python .\ASWAXS_reduction_pipeline_v6\scripts\run_kafka_queue_bridge.py `
   --queue .\ASWAXS_reduction_pipeline_v6\outputs\beamline\measurement_done_queue.jsonl `
-  --bootstrap-servers "kafka-host:9092" `
-  --topic "aswaxs.bluesky.documents"
+  --bootstrap-servers "164.54.169.92:9092" `
+  --topic "bluesky_aswaxs"
 ```
 
 The reducer logs the queue message as `measurement_done_received` in

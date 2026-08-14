@@ -155,12 +155,23 @@ def _install_xmodfit_save_handoff(window: QtWidgets.QWidget) -> None:
         QtWidgets.QFileDialog.getSaveFileName = tracking_get_save_name
         if xanos_file_dialog is not None and callable(original_xanos_get_save_name):
             xanos_file_dialog.getSaveFileName = tracking_get_save_name
+        save_error: BaseException | None = None
         try:
             original_save()
+        except Exception as exc:  # noqa: BLE001
+            save_error = exc
         finally:
             QtWidgets.QFileDialog.getSaveFileName = original_get_save_name
             if xanos_file_dialog is not None and callable(original_xanos_get_save_name):
                 xanos_file_dialog.getSaveFileName = original_xanos_get_save_name
+
+        if save_error is not None:
+            QtWidgets.QMessageBox.warning(
+                window,
+                "Save Error",
+                f"An error occurred while saving ASAXS components:\n\n{save_error}",
+            )
+            return
 
         if not saved_path:
             return
@@ -168,15 +179,32 @@ def _install_xmodfit_save_handoff(window: QtWidgets.QWidget) -> None:
         if output_path.suffix == "":
             output_path = output_path.with_suffix(".txt")
         if not output_path.exists():
+            QtWidgets.QMessageBox.warning(
+                window,
+                "Cannot Send to XModFit",
+                f"The saved file was not found on disk:\n{output_path}\n\n"
+                "XModFit will not be opened.",
+            )
             return
         try:
-            open_xmodfit_window(data_files=[output_path])
-            window.statusBar().showMessage(f"Saved ASAXS components and opened XModFit: {output_path}") if hasattr(window, "statusBar") else None
+            xmodfit_proc = open_xmodfit_window(data_files=[output_path])
+            if hasattr(window, "statusBar"):
+                window.statusBar().showMessage(
+                    f"Saved ASAXS components and opening XModFit: {output_path}"
+                )
+            _show_xmodfit_launch_tip(window)
+            _schedule_xmodfit_health_check(window, xmodfit_proc, output_path)
         except XModFitLinkerError as exc:
             QtWidgets.QMessageBox.warning(
                 window,
                 "Cannot Send to XModFit",
                 f"Saved ASAXS components, but XModFit could not open them.\n\n{exc}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            QtWidgets.QMessageBox.warning(
+                window,
+                "Cannot Send to XModFit",
+                f"Saved ASAXS components, but an unexpected error prevented XModFit from opening.\n\n{exc}",
             )
 
     window.save_ASAXS = save_and_open_xmodfit
@@ -188,6 +216,51 @@ def _install_xmodfit_save_handoff(window: QtWidgets.QWidget) -> None:
         except TypeError:
             pass
         save_button.clicked.connect(window.save_ASAXS)
+
+
+def _show_xmodfit_launch_tip(window: QtWidgets.QWidget) -> None:
+    """Show a brief tooltip near the Save button confirming XModFit is opening."""
+    save_button = getattr(window, "saveASAXSPushButton", None)
+    anchor = save_button if save_button is not None else window
+    try:
+        rect = anchor.rect()
+        pos = anchor.mapToGlobal(QtCore.QPoint(rect.center().x(), rect.bottom()))
+        QtWidgets.QToolTip.showText(pos, "XModFit is opening...", anchor, rect, 4000)
+    except Exception:
+        pass
+
+
+def _schedule_xmodfit_health_check(
+    parent: QtWidgets.QWidget,
+    proc: object,
+    data_path: Path,
+    delay_ms: int = 5000,
+) -> None:
+    """Warn the user if the XModFit subprocess exits within *delay_ms* ms of launch."""
+    def _check() -> None:
+        rc = getattr(proc, "poll", lambda: None)()
+        if rc is None:
+            return
+        stderr_text = ""
+        stderr_fh = getattr(proc, "stderr", None)
+        if stderr_fh is not None:
+            try:
+                import io
+                if isinstance(stderr_fh, io.IOBase) and not stderr_fh.closed:
+                    stderr_text = stderr_fh.read() or ""
+            except Exception:
+                pass
+        detail = f"\nError output:\n{stderr_text[:800]}\n" if stderr_text.strip() else ""
+        QtWidgets.QMessageBox.warning(
+            parent,
+            "XModFit Closed Unexpectedly",
+            f"XModFit exited immediately after launching (exit code: {rc}).{detail}\n"
+            f"Saved file is still available at:\n{data_path}\n\n"
+            "Check the terminal for more details. "
+            "You can open the file in XModFit manually via its Data menu.",
+        )
+
+    QtCore.QTimer.singleShot(delay_ms, _check)
 
 
 def _xanos_module_file_dialog(window: QtWidgets.QWidget) -> object | None:

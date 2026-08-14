@@ -469,6 +469,9 @@ def run_bluesky_kafka_bridge(
         )
 
     start_docs_by_uid: dict[str, dict[str, Any]] = {}
+    # Maps descriptor uid → run_start uid so events can be associated with
+    # their parent start document even when the run uid is not in the event.
+    descriptor_uid_to_run_uid: dict[str, str] = {}
 
     def consume_document(name: str, doc: dict[str, Any]) -> None:
         payload = dict(doc)
@@ -493,9 +496,42 @@ def run_bluesky_kafka_bridge(
             for path in paths:
                 log(f"Queued active reduction watch from Kafka start: {path}")
             return
-        if document_name == "stop":
+        if document_name == "descriptor":
+            desc_uid = _first_metadata_value(payload, ("uid",))
+            run_start_uid = _first_metadata_value(payload, ("run_start",))
+            if desc_uid and run_start_uid:
+                descriptor_uid_to_run_uid[desc_uid] = run_start_uid
+            if not any(key in payload for key in REQUIRED_FIELDS):
+                return
+        elif document_name in {"event", "event_page"}:
+            # Merge parent start-document fields so sample name, uid, and
+            # scan_id are available even when the event only carries data_dir.
+            desc_uid = _first_metadata_value(payload, ("descriptor",))
+            run_uid = descriptor_uid_to_run_uid.get(desc_uid or "")
+            if run_uid is None:
+                run_uid = _first_metadata_value(payload, ("run_start",))
+            start_payload = start_docs_by_uid.get(run_uid or "")
+            if start_payload is not None:
+                # Start-doc fields fill gaps; event-level fields take precedence.
+                merged = dict(start_payload)
+                merged.update(payload)
+                payload = merged
+                sample_name = _sample_name_from_payload(payload) or sample_name
+                scan_id = _scan_id_from_payload(payload) or scan_id
+            if not any(key in payload for key in REQUIRED_FIELDS):
+                return
+            log(
+                f"Kafka {document_name}: run_uid={run_uid or 'unknown'}, "
+                f"sample={sample_name}, scan_id={scan_id}"
+            )
+        elif document_name == "stop":
             run_uid = _first_metadata_value(payload, ("run_start", "uid", "run_uid"))
             start_payload = start_docs_by_uid.pop(run_uid, None) if run_uid else None
+            # Clean up descriptor cache entries that belonged to this run.
+            if run_uid:
+                stale = [d for d, r in descriptor_uid_to_run_uid.items() if r == run_uid]
+                for d in stale:
+                    descriptor_uid_to_run_uid.pop(d, None)
             if start_payload is None:
                 log(f"Kafka stop skipped: no cached start document for run_start={run_uid or 'unknown'}")
                 return
@@ -509,7 +545,7 @@ def run_bluesky_kafka_bridge(
             scan_id = _scan_id_from_payload(queue_payload)
             log(f"Kafka stop received; queueing reduction: sample={sample_name}, scan_id={scan_id}, uid={run_uid or 'unknown'}")
             payload = queue_payload
-        elif document_name in {"event", "event_page", "descriptor", "datum", "resource"}:
+        elif document_name in {"datum", "resource"}:
             if not any(key in payload for key in REQUIRED_FIELDS):
                 return
             log(f"Kafka data document contains direct job fields: name={name}, sample={sample_name}, scan_id={scan_id}")

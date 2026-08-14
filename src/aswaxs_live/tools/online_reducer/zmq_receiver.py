@@ -21,6 +21,8 @@ def parse_image_message(raw: bytes | str) -> tuple[Path, dict]:
 
 class ZmqReceiver(QtCore.QObject):
     image_received = Signal(str, str, object)
+    # Emitted after each successfully parsed message: (detector, total_count, endpoint)
+    message_stats = Signal(str, int, str)
     status = Signal(str)
     error = Signal(str)
     stopped = Signal()
@@ -36,6 +38,8 @@ class ZmqReceiver(QtCore.QObject):
         context = zmq.Context()
         poller = zmq.Poller()
         sockets: dict[object, str] = {}
+        endpoint_for: dict[object, str] = {}
+        counts: dict[str, int] = {detector: 0 for detector in self.endpoints}
         try:
             for detector, endpoint in self.endpoints.items():
                 sock = context.socket(zmq.SUB)
@@ -44,6 +48,7 @@ class ZmqReceiver(QtCore.QObject):
                 sock.connect(endpoint)
                 poller.register(sock, zmq.POLLIN)
                 sockets[sock] = detector
+                endpoint_for[sock] = endpoint
                 self.status.emit(f"{detector}: listening on {endpoint}")
             while self._running:
                 for sock, event in dict(poller.poll(100)).items():
@@ -54,7 +59,9 @@ class ZmqReceiver(QtCore.QObject):
                         frames = sock.recv_multipart()
                         raw = frames[-1]
                         path, payload = parse_image_message(raw)
+                        counts[detector] += 1
                         self.image_received.emit(detector, str(path), payload)
+                        self.message_stats.emit(detector, counts[detector], endpoint_for[sock])
                     except Exception as exc:  # keep the listener alive after a bad message
                         self.error.emit(f"{detector}: rejected ZMQ message: {exc}")
         except Exception as exc:
