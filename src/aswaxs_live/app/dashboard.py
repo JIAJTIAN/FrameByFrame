@@ -8,6 +8,7 @@ import re
 import sys
 import time
 import traceback
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,20 @@ import h5py
 import numpy as np
 from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 import pyqtgraph as pg
+import pyqtgraph.graphicsItems.GraphicsItem as _pg_gi
+
+# Suppress the spurious "Failed to disconnect" RuntimeWarning that PySide6 emits
+# when pyqtgraph clears a plot whose items try to disconnect from an already-replaced
+# ViewBox.  The try/except inside _updateView catches the exception but PySide6
+# still emits the warning at the C level before the Python except clause runs.
+_pg_updateView_orig = _pg_gi.GraphicsItem._updateView
+
+def _pg_updateView_silent(self):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        _pg_updateView_orig(self)
+
+_pg_gi.GraphicsItem._updateView = _pg_updateView_silent
 
 from aswaxs_live.tools.iq_viewer import H5IqViewerDialog
 from aswaxs_live.tools.iq_viewer import H5StructureViewerDialog
@@ -39,6 +54,29 @@ from aswaxs_live.workflows.queue import (
     task_to_json,
 )
 from aswaxs_live.app.theme import fit_window_to_available_screen
+
+try:
+    from PySide6.QtSvgWidgets import QSvgWidget as _QSvgWidget
+
+    class _AspectSvgWidget(_QSvgWidget):
+        """QSvgWidget locked to a 12:7 (width:height) aspect ratio."""
+        _W, _H = 12, 7
+
+        def hasHeightForWidth(self) -> bool:
+            return True
+
+        def heightForWidth(self, w: int) -> int:
+            return w * self._H // self._W
+
+        def sizeHint(self) -> QtCore.QSize:
+            return QtCore.QSize(360, 210)
+
+        def minimumSizeHint(self) -> QtCore.QSize:
+            return QtCore.QSize(180, 105)
+
+    _SVG_WIDGETS_OK = True
+except ImportError:
+    _SVG_WIDGETS_OK = False
 
 
 BUILDER_SETTINGS_PATH = PROJECT_DIR / "aswaxs_v6_builder_settings.json"
@@ -406,6 +444,260 @@ class HelpDocumentDialog(QtWidgets.QDialog):
         fit_window_to_available_screen(self, (1040, 820), minimum=(720, 520))
 
 
+_ASAXS_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 210" preserveAspectRatio="xMidYMid meet" font-family="system-ui,Arial,sans-serif">
+  <rect width="360" height="210" fill="#eff6ff" rx="8"/>
+  <rect width="360" height="32" fill="#2563eb" rx="8"/>
+  <rect y="22" width="360" height="10" fill="#2563eb"/>
+  <text x="180" y="21" text-anchor="middle" font-size="12" font-weight="bold" fill="white">Anomalous SAXS · Multi-Energy Analysis</text>
+  <rect x="10" y="55" width="54" height="28" rx="5" fill="#1d4ed8"/>
+  <text x="37" y="73" text-anchor="middle" font-size="9" font-weight="bold" fill="white">X-ray</text>
+  <line x1="64" y1="62" x2="126" y2="76" stroke="#dc2626" stroke-width="2" stroke-dasharray="6,3"/>
+  <line x1="64" y1="69" x2="126" y2="80" stroke="#ea580c" stroke-width="3"/>
+  <line x1="64" y1="76" x2="126" y2="84" stroke="#7c3aed" stroke-width="2" stroke-dasharray="6,3"/>
+  <circle cx="155" cy="81" r="25" fill="white" stroke="#94a3b8" stroke-width="1.5"/>
+  <circle cx="147" cy="75" r="3.5" fill="#94a3b8"/>
+  <circle cx="163" cy="88" r="3.5" fill="#94a3b8"/>
+  <circle cx="148" cy="89" r="3" fill="#94a3b8"/>
+  <circle cx="161" cy="73" r="5" fill="#ea580c" stroke="#c2410c" stroke-width="1.2"/>
+  <circle cx="150" cy="83" r="5" fill="#ea580c" stroke="#c2410c" stroke-width="1.2"/>
+  <text x="155" y="115" text-anchor="middle" font-size="8" fill="#64748b">Sample</text>
+  <text x="155" y="126" text-anchor="middle" font-size="7.5" fill="#ea580c">● resonant atoms</text>
+  <line x1="179" y1="70" x2="208" y2="57" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="180" y1="79" x2="208" y2="79" stroke="#ea580c" stroke-width="2.5"/>
+  <line x1="179" y1="88" x2="208" y2="101" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <rect x="212" y="44" width="138" height="106" rx="5" fill="white" stroke="#cbd5e1" stroke-width="1.2"/>
+  <line x1="224" y1="143" x2="343" y2="143" stroke="#94a3b8" stroke-width="1.2"/>
+  <line x1="224" y1="143" x2="224" y2="52" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="284" y="155" text-anchor="middle" font-size="7.5" fill="#64748b" font-style="italic">q (Å⁻¹)</text>
+  <text x="216" y="98" text-anchor="middle" font-size="7.5" fill="#64748b" transform="rotate(-90,216,98)" font-style="italic">I(q)</text>
+  <path d="M227,57 Q261,90 337,138" stroke="#dc2626" stroke-width="2" fill="none" stroke-dasharray="6,3"/>
+  <path d="M227,67 Q261,100 337,140" stroke="#ea580c" stroke-width="2.5" fill="none"/>
+  <path d="M227,77 Q261,110 337,141" stroke="#7c3aed" stroke-width="2" fill="none" stroke-dasharray="6,3"/>
+  <text x="180" y="168" text-anchor="middle" font-size="9" fill="#1e293b">Scan energies near the absorption edge of the target element</text>
+  <text x="180" y="182" text-anchor="middle" font-size="9" fill="#2563eb">→ Scattering curves shift with energy near the resonant element</text>
+  <text x="180" y="197" text-anchor="middle" font-size="7.5" fill="#94a3b8">Requires 3+ energies · processed by XAnoS</text>
+</svg>
+"""
+
+_SAXS_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 210" preserveAspectRatio="xMidYMid meet" font-family="system-ui,Arial,sans-serif">
+  <rect width="360" height="210" fill="#f0fdf4" rx="8"/>
+  <rect width="360" height="32" fill="#16a34a" rx="8"/>
+  <rect y="22" width="360" height="10" fill="#16a34a"/>
+  <text x="180" y="21" text-anchor="middle" font-size="12" font-weight="bold" fill="white">SAXS · Single-Energy Measurement</text>
+  <rect x="10" y="58" width="54" height="28" rx="5" fill="#15803d"/>
+  <text x="37" y="76" text-anchor="middle" font-size="9" font-weight="bold" fill="white">X-ray</text>
+  <line x1="64" y1="72" x2="128" y2="80" stroke="#22c55e" stroke-width="4"/>
+  <text x="88" y="68" text-anchor="middle" font-size="7.5" fill="#15803d" font-style="italic">fixed E</text>
+  <circle cx="157" cy="82" r="25" fill="white" stroke="#94a3b8" stroke-width="1.5"/>
+  <circle cx="148" cy="74" r="5.5" fill="#22c55e" opacity="0.75"/>
+  <circle cx="165" cy="78" r="5.5" fill="#22c55e" opacity="0.75"/>
+  <circle cx="150" cy="89" r="5.5" fill="#22c55e" opacity="0.75"/>
+  <circle cx="166" cy="90" r="5.5" fill="#22c55e" opacity="0.75"/>
+  <circle cx="157" cy="68" r="4" fill="#22c55e" opacity="0.6"/>
+  <text x="157" y="116" text-anchor="middle" font-size="8" fill="#64748b">Sample</text>
+  <text x="157" y="127" text-anchor="middle" font-size="7.5" fill="#22c55e">● uniform particles</text>
+  <line x1="182" y1="73" x2="210" y2="58" stroke="#22c55e" stroke-width="1.5" opacity="0.45"/>
+  <line x1="182" y1="80" x2="210" y2="80" stroke="#22c55e" stroke-width="3"/>
+  <line x1="182" y1="87" x2="210" y2="102" stroke="#22c55e" stroke-width="1.5" opacity="0.45"/>
+  <rect x="214" y="44" width="136" height="106" rx="5" fill="white" stroke="#cbd5e1" stroke-width="1.2"/>
+  <line x1="226" y1="143" x2="343" y2="143" stroke="#94a3b8" stroke-width="1.2"/>
+  <line x1="226" y1="143" x2="226" y2="52" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="285" y="155" text-anchor="middle" font-size="7.5" fill="#64748b" font-style="italic">q (Å⁻¹)</text>
+  <text x="218" y="98" text-anchor="middle" font-size="7.5" fill="#64748b" transform="rotate(-90,218,98)" font-style="italic">I(q)</text>
+  <path d="M229,55 C243,56 255,67 267,82 Q293,110 337,141" stroke="#16a34a" stroke-width="2.8" fill="none"/>
+  <text x="180" y="168" text-anchor="middle" font-size="9" fill="#1e293b">Single energy · azimuthal integration over the detector</text>
+  <text x="180" y="182" text-anchor="middle" font-size="9" fill="#16a34a">→ Scattering profile I(q) encodes size, shape, and concentration</text>
+  <text x="180" y="197" text-anchor="middle" font-size="7.5" fill="#94a3b8">Processed by pyFAI azimuthal integration</text>
+</svg>
+"""
+
+_SEQUENCE_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 210" preserveAspectRatio="xMidYMid meet" font-family="system-ui,Arial,sans-serif">
+  <rect width="360" height="210" fill="#fffbeb" rx="8"/>
+  <rect width="360" height="30" fill="#b45309" rx="8"/>
+  <rect y="8" width="360" height="22" fill="#b45309"/>
+  <text x="180" y="20" fill="white" font-size="10" font-weight="700" text-anchor="middle">Acquisition Sequence · Measurement Plan</text>
+  <!-- Energy 1 block -->
+  <rect x="14" y="44" width="76" height="16" fill="#b45309" rx="2"/>
+  <text x="52" y="56" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">Energy 1</text>
+  <rect x="14" y="64" width="22" height="50" fill="#fde68a" rx="2" stroke="#b45309" stroke-width="1"/>
+  <text x="25" y="93" fill="#78350f" font-size="6.5" text-anchor="middle">G1</text>
+  <rect x="38" y="64" width="22" height="50" fill="#fde68a" rx="2" stroke="#b45309" stroke-width="1"/>
+  <text x="49" y="93" fill="#78350f" font-size="6.5" text-anchor="middle">G2</text>
+  <rect x="62" y="64" width="22" height="50" fill="#fde68a" rx="2" stroke="#b45309" stroke-width="1"/>
+  <text x="73" y="93" fill="#78350f" font-size="6.5" text-anchor="middle">GM</text>
+  <!-- Arrow 1 -->
+  <line x1="96" y1="89" x2="112" y2="89" stroke="#b45309" stroke-width="2"/>
+  <polygon points="108,85 116,89 108,93" fill="#b45309"/>
+  <!-- Energy 2 block -->
+  <rect x="120" y="44" width="76" height="16" fill="#b45309" rx="2"/>
+  <text x="158" y="56" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">Energy 2</text>
+  <rect x="120" y="64" width="22" height="50" fill="#fde68a" rx="2" stroke="#b45309" stroke-width="1"/>
+  <text x="131" y="93" fill="#78350f" font-size="6.5" text-anchor="middle">G1</text>
+  <rect x="144" y="64" width="22" height="50" fill="#fde68a" rx="2" stroke="#b45309" stroke-width="1"/>
+  <text x="155" y="93" fill="#78350f" font-size="6.5" text-anchor="middle">G2</text>
+  <rect x="168" y="64" width="22" height="50" fill="#fde68a" rx="2" stroke="#b45309" stroke-width="1"/>
+  <text x="179" y="93" fill="#78350f" font-size="6.5" text-anchor="middle">GM</text>
+  <!-- Ellipsis -->
+  <circle cx="212" cy="89" r="3" fill="#b45309"/>
+  <circle cx="224" cy="89" r="3" fill="#b45309"/>
+  <circle cx="236" cy="89" r="3" fill="#b45309"/>
+  <!-- Energy N block -->
+  <rect x="250" y="44" width="96" height="16" fill="#b45309" rx="2"/>
+  <text x="298" y="56" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">Energy N</text>
+  <rect x="250" y="64" width="26" height="50" fill="#fde68a" rx="2" stroke="#b45309" stroke-width="1"/>
+  <text x="263" y="93" fill="#78350f" font-size="6.5" text-anchor="middle">G1</text>
+  <rect x="279" y="64" width="26" height="50" fill="#fde68a" rx="2" stroke="#b45309" stroke-width="1"/>
+  <text x="292" y="93" fill="#78350f" font-size="6.5" text-anchor="middle">G2</text>
+  <rect x="308" y="64" width="26" height="50" fill="#fde68a" rx="2" stroke="#b45309" stroke-width="1"/>
+  <text x="321" y="93" fill="#78350f" font-size="6.5" text-anchor="middle">GM</text>
+  <!-- Frame depth indicator -->
+  <rect x="14" y="132" width="30" height="14" fill="#fde68a" rx="1" stroke="#b45309" stroke-width="0.5"/>
+  <rect x="16" y="130" width="30" height="14" fill="#fcd34d" rx="1" stroke="#b45309" stroke-width="0.5"/>
+  <rect x="18" y="128" width="30" height="14" fill="#f59e0b" rx="1" stroke="#b45309" stroke-width="0.5"/>
+  <text x="54" y="139" fill="#78350f" font-size="8">F frames averaged per group</text>
+  <!-- Caption -->
+  <text x="180" y="170" fill="#92400e" font-size="8.5" text-anchor="middle">Files per detector = Energies x Groups x Frames</text>
+  <text x="180" y="185" fill="#b45309" font-size="8" font-style="italic" text-anchor="middle">Set Energies = 1 for standard single-energy SAXS</text>
+</svg>
+"""
+
+_CALIBRATION_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 210" preserveAspectRatio="xMidYMid meet" font-family="system-ui,Arial,sans-serif">
+  <rect width="360" height="210" fill="#f0fdfa" rx="8"/>
+  <rect width="360" height="30" fill="#0d9488" rx="8"/>
+  <rect y="8" width="360" height="22" fill="#0d9488"/>
+  <text x="180" y="20" fill="white" font-size="10" font-weight="700" text-anchor="middle">Detector Calibration · SAXS Geometry</text>
+  <!-- X-ray source -->
+  <rect x="14" y="74" width="38" height="36" fill="#0d9488" rx="4"/>
+  <text x="33" y="89" fill="white" font-size="8" font-weight="700" text-anchor="middle">X-ray</text>
+  <text x="33" y="101" fill="white" font-size="7" text-anchor="middle">source</text>
+  <!-- Beam to sample -->
+  <line x1="52" y1="92" x2="138" y2="92" stroke="#0d9488" stroke-width="2.5"/>
+  <polygon points="134,88 144,92 134,96" fill="#0d9488"/>
+  <!-- Sample -->
+  <circle cx="156" cy="92" r="18" fill="white" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="151" cy="89" r="5" fill="#f97316" opacity="0.85"/>
+  <circle cx="161" cy="89" r="5" fill="#f97316" opacity="0.85"/>
+  <circle cx="156" cy="97" r="5" fill="#0d9488" opacity="0.6"/>
+  <text x="156" y="124" fill="#134e4a" font-size="7" text-anchor="middle">Sample</text>
+  <!-- Scattered beam -->
+  <line x1="174" y1="92" x2="224" y2="92" stroke="#0d9488" stroke-width="2.5"/>
+  <polygon points="220,88 230,92 220,96" fill="#0d9488"/>
+  <!-- Detector -->
+  <rect x="234" y="46" width="112" height="102" fill="white" rx="3" stroke="#0d9488" stroke-width="2"/>
+  <!-- Detector grid lines -->
+  <line x1="252" y1="46" x2="252" y2="148" stroke="#ccfbf1" stroke-width="0.8"/>
+  <line x1="270" y1="46" x2="270" y2="148" stroke="#ccfbf1" stroke-width="0.8"/>
+  <line x1="288" y1="46" x2="288" y2="148" stroke="#ccfbf1" stroke-width="0.8"/>
+  <line x1="306" y1="46" x2="306" y2="148" stroke="#ccfbf1" stroke-width="0.8"/>
+  <line x1="324" y1="46" x2="324" y2="148" stroke="#ccfbf1" stroke-width="0.8"/>
+  <line x1="234" y1="64" x2="346" y2="64" stroke="#ccfbf1" stroke-width="0.8"/>
+  <line x1="234" y1="82" x2="346" y2="82" stroke="#ccfbf1" stroke-width="0.8"/>
+  <line x1="234" y1="100" x2="346" y2="100" stroke="#ccfbf1" stroke-width="0.8"/>
+  <line x1="234" y1="118" x2="346" y2="118" stroke="#ccfbf1" stroke-width="0.8"/>
+  <line x1="234" y1="136" x2="346" y2="136" stroke="#ccfbf1" stroke-width="0.8"/>
+  <!-- Masked pixels (grey tiles) -->
+  <rect x="234" y="46" width="18" height="18" fill="#94a3b8" opacity="0.7"/>
+  <rect x="234" y="64" width="18" height="18" fill="#94a3b8" opacity="0.7"/>
+  <rect x="328" y="130" width="18" height="18" fill="#94a3b8" opacity="0.7"/>
+  <rect x="310" y="46" width="18" height="18" fill="#94a3b8" opacity="0.7"/>
+  <!-- PONI crosshair (beam center on detector) -->
+  <line x1="282" y1="84" x2="282" y2="100" stroke="#ef4444" stroke-width="2"/>
+  <line x1="274" y1="92" x2="290" y2="92" stroke="#ef4444" stroke-width="2"/>
+  <circle cx="282" cy="92" r="5" fill="none" stroke="#ef4444" stroke-width="1.5"/>
+  <text x="294" y="89" fill="#ef4444" font-size="7" font-weight="700">PONI</text>
+  <!-- Mask label -->
+  <text x="234" y="158" fill="#64748b" font-size="7">mask</text>
+  <!-- Distance bracket d -->
+  <line x1="156" y1="152" x2="234" y2="152" stroke="#0d9488" stroke-width="1"/>
+  <line x1="156" y1="148" x2="156" y2="156" stroke="#0d9488" stroke-width="1"/>
+  <line x1="234" y1="148" x2="234" y2="156" stroke="#0d9488" stroke-width="1"/>
+  <text x="195" y="163" fill="#134e4a" font-size="8" text-anchor="middle">sample-detector distance d</text>
+  <!-- Caption -->
+  <text x="180" y="178" fill="#134e4a" font-size="8.5" text-anchor="middle">PONI file stores beam center, d, and tilt angles</text>
+  <text x="180" y="193" fill="#0d9488" font-size="8" font-style="italic" text-anchor="middle">Mask excludes bad pixels before azimuthal integration</text>
+</svg>
+"""
+
+
+class _ModeCard(QtWidgets.QFrame):
+    """Selectable card for the analysis-mode picker (character-select style)."""
+
+    selected = QtCore.Signal(str)
+
+    def __init__(self, mode_key: str, title: str, subtitle: str, desc: str, accent: str) -> None:
+        super().__init__()
+        self.setObjectName("ModeCard")
+        self._mode_key = mode_key
+        self._accent = accent
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setMinimumHeight(160)
+        self.setMinimumWidth(230)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(6)
+
+        bar = QtWidgets.QFrame()
+        bar.setFixedHeight(4)
+        bar.setStyleSheet(f"background: {accent}; border: none; border-radius: 2px;")
+
+        title_lbl = QtWidgets.QLabel(title)
+        title_lbl.setStyleSheet("font-weight: 700; font-size: 15px; background: transparent;")
+
+        sub_lbl = QtWidgets.QLabel(subtitle)
+        sub_lbl.setStyleSheet(f"color: {accent}; font-size: 11px; font-weight: 600; background: transparent;")
+
+        desc_lbl = QtWidgets.QLabel(desc)
+        desc_lbl.setStyleSheet("color: #64748b; font-size: 10px; background: transparent;")
+        desc_lbl.setWordWrap(True)
+
+        layout.addWidget(bar)
+        layout.addWidget(title_lbl)
+        layout.addWidget(sub_lbl)
+        layout.addWidget(desc_lbl)
+        layout.addStretch(1)
+
+        self.set_active(False)
+
+    def set_active(self, active: bool) -> None:
+        if active:
+            self.setStyleSheet(
+                f"QFrame#ModeCard {{ border: 2px solid {self._accent}; border-radius: 6px; background: white; }}"
+            )
+        else:
+            self.setStyleSheet(
+                "QFrame#ModeCard { border: 1.5px solid #d0d4da; border-radius: 6px; background: #f8f9fb; }"
+                "QFrame#ModeCard:hover { border-color: #94a3b8; background: #f0f4f8; }"
+            )
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        self.selected.emit(self._mode_key)
+        super().mousePressEvent(event)
+
+
+class _FolderScanWorker(QtCore.QRunnable):
+    """Counts HDF5 files in Pil300K / Eig1M sub-dirs without blocking the GUI."""
+
+    class _Signals(QtCore.QObject):
+        done = QtCore.Signal(int, int, int)  # serial, pil_count, eig_count
+
+    def __init__(self, folder: Path, serial: int) -> None:
+        super().__init__()
+        self.setAutoDelete(True)
+        self._folder = folder
+        self._serial = serial
+        self.signals = self._Signals()
+
+    def run(self) -> None:
+        from aswaxs_live.workflows.queue import scan_detector_files
+        pil, eig = scan_detector_files(self._folder, "*.h5")
+        self.signals.done.emit(self._serial, pil, eig)
+
+
 class DashboardWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -425,11 +717,17 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.xmodfit_processes: list[object] = []
         self.frame_stability_help_dialog: HelpDocumentDialog | None = None
         self.last_successful_task_index: int | None = None
+        self._error_count: int = 0
         self.active_run_indices: list[int] = []
         self.editing_index: int | None = None
         self._loading_builder_settings = False
         self._output_dir_manually_overridden = False
         self._monitor_pv_scan_signature: tuple[str, str, str] | None = None
+        self._scan_serial: int = 0
+        self._builder_save_timer = QtCore.QTimer(self)
+        self._builder_save_timer.setSingleShot(True)
+        self._builder_save_timer.setInterval(250)
+        self._builder_save_timer.timeout.connect(self.save_builder_settings)
         self._build_ui()
         self.load_builder_settings()
         self._load_default_queue()
@@ -458,10 +756,6 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self._build_task_builder_tab()
         self._build_dashboard_tab()
 
-        self.curve_refresh_timer = QtCore.QTimer(self)
-        self.curve_refresh_timer.setInterval(5000)
-        self.curve_refresh_timer.timeout.connect(self.refresh_current_curves)
-        self.curve_refresh_timer.start()
 
         self.statusBar().showMessage("Ready")
 
@@ -587,6 +881,50 @@ class DashboardWindow(QtWidgets.QMainWindow):
             QLineEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
                 border-color: #2f6fae;
             }
+            QSpinBox, QDoubleSpinBox {
+                padding-right: 20px;
+            }
+            QSpinBox::up-button, QDoubleSpinBox::up-button {
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid #b9c0ca;
+                border-bottom: 1px solid #d0d4da;
+                border-top-right-radius: 2px;
+                background: #f0f2f5;
+            }
+            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover {
+                background: #dce8f5;
+                border-left-color: #6f9ac8;
+            }
+            QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed {
+                background: #c5dcf0;
+            }
+            QSpinBox::down-button, QDoubleSpinBox::down-button {
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+                width: 20px;
+                border-left: 1px solid #b9c0ca;
+                border-bottom-right-radius: 2px;
+                background: #f0f2f5;
+            }
+            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+                background: #dce8f5;
+                border-left-color: #6f9ac8;
+            }
+            QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {
+                background: #c5dcf0;
+            }
+            QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+                image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='4'><path d='M0 4L3 0L6 4Z' fill='%23505862'/></svg>");
+                width: 6px;
+                height: 4px;
+            }
+            QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+                image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='4'><path d='M0 0L3 4L6 0Z' fill='%23505862'/></svg>");
+                width: 6px;
+                height: 4px;
+            }
             QPushButton {
                 background: #f8f9fb;
                 border: 1px solid #b9c0ca;
@@ -619,14 +957,16 @@ class DashboardWindow(QtWidgets.QMainWindow):
                 background: #1d4f80;
             }
             QFrame#BuilderStepTrack {
-                background: #eef2f6;
-                border: 1px solid #c8ccd2;
+                background: #e8eef5;
+                border: 1px solid #c0ccd8;
                 border-radius: 3px;
                 padding: 5px 8px;
             }
             QPushButton#BuilderStepButton {
                 background: transparent;
                 border: 1px solid transparent;
+                min-height: 26px;
+                padding: 2px 10px;
                 color: #707780;
                 font-weight: 500;
                 padding: 5px 8px;
@@ -645,9 +985,9 @@ class DashboardWindow(QtWidgets.QMainWindow):
             }
             QLabel#BuilderStepTitle {
                 color: #1f4f7f;
-                font-size: 15px;
-                font-weight: 600;
-                padding: 2px 0 8px 0;
+                font-size: 19px;
+                font-weight: 700;
+                padding: 4px 0 14px 0;
             }
             QLabel#BuilderReview {
                 background: #f7f9fb;
@@ -922,7 +1262,6 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.error_panel = self._build_error_panel()
         self.lower_tabs.addTab(self.log_panel, "Log")
         self.lower_tabs.addTab(self.error_panel, "Errors")
-        self.lower_tabs.setMaximumHeight(150)
         self.lower_tabs.hide()
         layout.addWidget(self.lower_tabs)
         self.log_drawer_button.toggled.connect(lambda checked: self._toggle_diagnostics(0, checked))
@@ -939,6 +1278,9 @@ class DashboardWindow(QtWidgets.QMainWindow):
             other.blockSignals(False)
             self.lower_tabs.setCurrentIndex(index)
             self.lower_tabs.show()
+            if index == 1:
+                self._error_count = 0
+                self.error_drawer_button.setText("Errors")
         elif not other.isChecked():
             self.lower_tabs.hide()
 
@@ -989,12 +1331,14 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.current_curve_plot.setBackground("w")
         plot_item = self.current_curve_plot.getPlotItem()
         plot_item.showGrid(x=True, y=True, alpha=0.22)
-        plot_item.setLabel("bottom", "q", units="A^-1", color="#20242a")
+        plot_item.setLabel("bottom", "q", units="Å⁻¹", color="#20242a")
         plot_item.setLabel("left", "I(q)", units="a.u.", color="#20242a")
         plot_item.getAxis("bottom").setPen(pg.mkPen("#4b5563"))
         plot_item.getAxis("left").setPen(pg.mkPen("#4b5563"))
         plot_item.getAxis("bottom").setTextPen(pg.mkPen("#20242a"))
         plot_item.getAxis("left").setTextPen(pg.mkPen("#20242a"))
+        plot_item.getAxis("bottom").enableAutoSIPrefix(False)
+        plot_item.getAxis("left").enableAutoSIPrefix(False)
 
     def _build_log_panel(self) -> QtWidgets.QWidget:
         panel = QtWidgets.QWidget()
@@ -1028,8 +1372,8 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.builder_step_track = QtWidgets.QFrame()
         self.builder_step_track.setObjectName("BuilderStepTrack")
         step_track_layout = QtWidgets.QHBoxLayout(self.builder_step_track)
-        step_track_layout.setContentsMargins(6, 4, 6, 4)
-        step_track_layout.setSpacing(4)
+        step_track_layout.setContentsMargins(10, 6, 10, 6)
+        step_track_layout.setSpacing(6)
         self.builder_step_buttons: list[QtWidgets.QPushButton] = []
         for step_index, title in enumerate(self.builder_step_titles):
             button = QtWidgets.QPushButton(f"{step_index + 1}. {title}")
@@ -1053,7 +1397,8 @@ class DashboardWindow(QtWidgets.QMainWindow):
         def step_page(title: str) -> tuple[QtWidgets.QWidget, QtWidgets.QVBoxLayout]:
             content = QtWidgets.QWidget()
             content_layout = QtWidgets.QVBoxLayout(content)
-            content_layout.setContentsMargins(10, 8, 10, 8)
+            content_layout.setContentsMargins(24, 16, 24, 16)
+            content_layout.setSpacing(12)
             heading = QtWidgets.QLabel(title)
             heading.setObjectName("BuilderStepTitle")
             content_layout.addWidget(heading)
@@ -1092,18 +1437,72 @@ class DashboardWindow(QtWidgets.QMainWindow):
         identity_form = QtWidgets.QFormLayout(identity_group)
         identity_form.addRow("Task name", self.task_name_edit)
         type_panel_layout.addWidget(identity_group)
-        mode_row = QtWidgets.QHBoxLayout()
-        reduction_group = QtWidgets.QGroupBox("Reduction")
-        reduction_form = QtWidgets.QFormLayout(reduction_group)
-        reduction_form.addRow("Mode", self.reduction_mode_combo)
-        detector_group = QtWidgets.QGroupBox("Detector Acquisition")
-        detector_form = QtWidgets.QFormLayout(detector_group)
-        detector_form.addRow("Mode", self.detector_mode_combo)
-        mode_row.addWidget(reduction_group, 1)
-        mode_row.addWidget(detector_group, 1)
-        type_panel_layout.addLayout(mode_row)
-        type_layout.addWidget(type_panel, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
-        type_layout.addStretch(1)
+        mode_header = QtWidgets.QLabel("Analysis Mode")
+        mode_header.setStyleSheet("font-weight: 600; color: #374151; font-size: 11px; margin-top: 6px;")
+        type_panel_layout.addWidget(mode_header)
+
+        self._asaxs_card = _ModeCard(
+            "asaxs", "Anomalous SAXS", "ASAXS / XAnoS",
+            "Multi-energy scan near the absorption edge\n"
+            "Resolves element-specific scattering contrast",
+            "#2563eb",
+        )
+        self._saxs_card = _ModeCard(
+            "saxs", "SAXS Only", "Standard SAXS",
+            "Single-energy azimuthal integration\n"
+            "Shape, size, and particle concentration",
+            "#16a34a",
+        )
+
+        cards_col = QtWidgets.QVBoxLayout()
+        cards_col.setSpacing(8)
+        cards_col.addWidget(self._asaxs_card)
+        cards_col.addWidget(self._saxs_card)
+        cards_col.addStretch(1)
+
+        if _SVG_WIDGETS_OK:
+            self._mode_svg_widget = _AspectSvgWidget()
+            self._mode_svg_widget.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
+            illus_widget: QtWidgets.QWidget = self._mode_svg_widget
+        else:
+            self._mode_svg_widget = None
+            illus_widget = QtWidgets.QLabel("(SVG not available)")
+            illus_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        illus_frame = QtWidgets.QFrame()
+        illus_frame.setObjectName("IllustrationFrame")
+        illus_frame.setStyleSheet(
+            "QFrame#IllustrationFrame { border: 1.5px solid #d0d4da; border-radius: 6px; background: white; }"
+        )
+        # Cap height to keep SVG at its 360:210 natural ratio (≈1.71:1).
+        # At panel maxWidth 980, illustration column ≈ 720 px wide → correct height ≈ 420 px.
+        illus_frame.setMaximumHeight(430)
+        illus_frame_layout = QtWidgets.QVBoxLayout(illus_frame)
+        illus_frame_layout.setContentsMargins(3, 3, 3, 3)
+        illus_frame_layout.addWidget(illus_widget)
+
+        mode_selector_row = QtWidgets.QHBoxLayout()
+        mode_selector_row.setSpacing(18)
+        mode_selector_row.addLayout(cards_col, 0)
+        mode_selector_row.addWidget(illus_frame, 1)
+        mode_selector_row.setAlignment(illus_frame, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        # give the illustration row all remaining vertical space in the panel
+        type_panel_layout.addLayout(mode_selector_row, 1)
+
+        self._asaxs_card.selected.connect(self._on_mode_card_selected)
+        self._saxs_card.selected.connect(self._on_mode_card_selected)
+        # Set initial visual state (ASAXS default) without going through _set_reduction_mode,
+        # because pair_table and pair_table_label don't exist yet at this point in build.
+        self._asaxs_card.set_active(True)
+        self._saxs_card.set_active(False)
+        if self._mode_svg_widget is not None:
+            self._mode_svg_widget.load(QtCore.QByteArray(_ASAXS_SVG.encode()))
+
+        # panel fills all available height; AlignHCenter would cap it at sizeHint height
+        type_layout.addWidget(type_panel, 1)
 
         self.pil_files_edit = Hdf5FileListView()
         self.pil_files_edit.setToolTip("File names are shown here; complete paths are retained internally from the main raw folder selection.")
@@ -1139,6 +1538,30 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.pil_count_label = QtWidgets.QLabel("Pil300K: 0")
         self.eig_count_label = QtWidgets.QLabel("Eig1M: 0")
         _raw_page, raw_layout = step_page("Select the raw HDF5 data")
+        raw_help = QtWidgets.QLabel(
+            "Point to the experiment folder that contains a Pil300K/ and/or Eig1M/ sub-directory. "
+            "Raw HDF5 frames (.h5) should be inside those sub-directories. "
+            "You can also choose individual HDF5 files directly with the 'Choose' buttons below — "
+            "the folder field will be filled in automatically."
+        )
+        raw_help.setWordWrap(True)
+        raw_help.setObjectName("BuilderReview")
+        raw_help.setVisible(False)
+        raw_help_btn = QtWidgets.QToolButton()
+        raw_help_btn.setText("Data Layout Help")
+        raw_help_btn.setCheckable(True)
+        raw_help_btn.setArrowType(QtCore.Qt.ArrowType.RightArrow)
+        raw_help_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        raw_help_btn.toggled.connect(raw_help.setVisible)
+        raw_help_btn.toggled.connect(
+            lambda v: raw_help_btn.setArrowType(QtCore.Qt.ArrowType.DownArrow if v else QtCore.Qt.ArrowType.RightArrow)
+        )
+        raw_layout.addWidget(raw_help_btn, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        raw_layout.addWidget(raw_help)
+        detector_group = QtWidgets.QGroupBox("Detector Acquisition")
+        detector_form = QtWidgets.QFormLayout(detector_group)
+        detector_form.addRow("Mode", self.detector_mode_combo)
+        raw_layout.addWidget(detector_group)
         raw_form = QtWidgets.QFormLayout()
         raw_form.addRow("Experiment folder", raw_row)
         raw_layout.addLayout(raw_form)
@@ -1164,10 +1587,26 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.group_spin = self._spin(1, 999, 13)
         self.frame_spin = self._spin(1, 999, 10)
         _sequence_page, sequence_layout = step_page("Confirm sequence and output")
-        sequence_panel = QtWidgets.QWidget()
-        sequence_panel.setMaximumWidth(1000)
-        sequence_panel_layout = QtWidgets.QVBoxLayout(sequence_panel)
-        sequence_panel_layout.setContentsMargins(0, 0, 0, 0)
+        seq_help = QtWidgets.QLabel(
+            "Energies: number of distinct X-ray energies in the ASAXS scan (set to 1 for plain SAXS). "
+            "Groups per energy: number of sample/solvent/calibration positions measured at each energy. "
+            "Frames per measurement: how many detector exposures are averaged per position. "
+            "The total frame count is shown below so you can verify the sequence matches your run plan."
+        )
+        seq_help.setWordWrap(True)
+        seq_help.setObjectName("BuilderReview")
+        seq_help.setVisible(False)
+        seq_help_btn = QtWidgets.QToolButton()
+        seq_help_btn.setText("Sequence Help")
+        seq_help_btn.setCheckable(True)
+        seq_help_btn.setArrowType(QtCore.Qt.ArrowType.RightArrow)
+        seq_help_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        seq_help_btn.toggled.connect(seq_help.setVisible)
+        seq_help_btn.toggled.connect(
+            lambda v: seq_help_btn.setArrowType(QtCore.Qt.ArrowType.DownArrow if v else QtCore.Qt.ArrowType.RightArrow)
+        )
+        sequence_layout.addWidget(seq_help_btn, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        sequence_layout.addWidget(seq_help)
         sequence_group = QtWidgets.QGroupBox("Acquisition Sequence")
         sequence_grid = QtWidgets.QGridLayout(sequence_group)
         for column, (label, widget) in enumerate(
@@ -1178,14 +1617,44 @@ class DashboardWindow(QtWidgets.QMainWindow):
             sequence_grid.setColumnStretch(column, 1)
         self.sequence_summary_label = QtWidgets.QLabel()
         self.sequence_summary_label.setObjectName("BuilderReview")
+        self.sequence_summary_label.setWordWrap(True)
         sequence_grid.addWidget(self.sequence_summary_label, 2, 0, 1, 3)
-        sequence_panel_layout.addWidget(sequence_group)
         output_group = QtWidgets.QGroupBox("Analysis Output")
         output_form = QtWidgets.QFormLayout(output_group)
         output_form.addRow("Output folder (auto)", output_row)
-        sequence_panel_layout.addWidget(output_group)
-        sequence_layout.addWidget(sequence_panel, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
-        sequence_layout.addStretch(1)
+
+        # Left column: form groups stacked; right column: sequence illustration
+        seq_form_col = QtWidgets.QVBoxLayout()
+        seq_form_col.setSpacing(10)
+        seq_form_col.addWidget(sequence_group)
+        # monitor_group added to seq_form_col later, then output_group
+
+        if _SVG_WIDGETS_OK:
+            seq_svg_widget = _AspectSvgWidget()
+            seq_svg_widget.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
+            seq_svg_widget.load(QtCore.QByteArray(_SEQUENCE_SVG.encode()))
+        else:
+            seq_svg_widget = QtWidgets.QLabel("(SVG not available)")
+            seq_svg_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        seq_illus_frame = QtWidgets.QFrame()
+        seq_illus_frame.setObjectName("IllustrationFrame")
+        seq_illus_frame.setStyleSheet(
+            "QFrame#IllustrationFrame { border: 1.5px solid #d0d4da; border-radius: 6px; background: white; }"
+        )
+        seq_illus_frame.setMaximumHeight(430)
+        seq_illus_layout = QtWidgets.QVBoxLayout(seq_illus_frame)
+        seq_illus_layout.setContentsMargins(3, 3, 3, 3)
+        seq_illus_layout.addWidget(seq_svg_widget)
+
+        seq_main_row = QtWidgets.QHBoxLayout()
+        seq_main_row.setSpacing(14)
+        seq_main_row.addLayout(seq_form_col, 3)
+        seq_main_row.addWidget(seq_illus_frame, 2)
+        seq_main_row.setAlignment(seq_illus_frame, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        sequence_layout.addLayout(seq_main_row, 1)
         for spin in (self.energy_spin, self.group_spin, self.frame_spin):
             spin.valueChanged.connect(self._update_sequence_summary)
         self._update_sequence_summary()
@@ -1219,7 +1688,9 @@ class DashboardWindow(QtWidgets.QMainWindow):
         monitor_scan_row.addWidget(self.scan_monitor_button)
         monitor_scan_row.addStretch(1)
         monitor_form.addRow("Read from data", monitor_scan_row)
-        sequence_panel_layout.insertWidget(1, monitor_group)
+        seq_form_col.addWidget(monitor_group)
+        seq_form_col.addWidget(output_group)
+        seq_form_col.addStretch(1)
         pil_poni_row = self._file_browse_row(self.pil_poni_edit, "Choose Pil300K PONI", "PONI files (*.poni);;All files (*)")
         pil_mask_row = self._file_browse_row(self.pil_mask_edit, "Choose Pil300K mask", "Mask files (*.msk *.edf *.npy);;All files (*)")
         eig_poni_row = self._file_browse_row(self.eig_poni_edit, "Choose Eig1M PONI", "PONI files (*.poni);;All files (*)")
@@ -1274,10 +1745,8 @@ class DashboardWindow(QtWidgets.QMainWindow):
         eig_calibration_form.addRow("Mask", eig_mask_row)
         detector_calibration.addWidget(self.pil_calibration_group, 1)
         detector_calibration.addWidget(self.eig_calibration_group, 1)
-        calibration_layout.addLayout(detector_calibration)
 
         common_group = QtWidgets.QGroupBox("Shared Reduction Settings")
-        common_group.setMaximumWidth(760)
         common_form = QtWidgets.QFormLayout(common_group)
         common_form.addRow("Sample thickness", self.capillary_spin)
         common_form.addRow("GC thickness", self.gc_thickness_spin)
@@ -1286,8 +1755,40 @@ class DashboardWindow(QtWidgets.QMainWindow):
         core_row.addWidget(self.core_limit_label)
         core_row.addStretch(1)
         common_form.addRow("CPU cores", core_row)
-        calibration_layout.addWidget(common_group, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
-        calibration_layout.addStretch(1)
+
+        # Left column: calibration groups + shared settings; right column: geometry illustration
+        cal_form_col = QtWidgets.QVBoxLayout()
+        cal_form_col.setSpacing(10)
+        cal_form_col.addLayout(detector_calibration)
+        cal_form_col.addWidget(common_group)
+        cal_form_col.addStretch(1)
+
+        if _SVG_WIDGETS_OK:
+            cal_svg_widget = _AspectSvgWidget()
+            cal_svg_widget.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
+            cal_svg_widget.load(QtCore.QByteArray(_CALIBRATION_SVG.encode()))
+        else:
+            cal_svg_widget = QtWidgets.QLabel("(SVG not available)")
+            cal_svg_widget.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        cal_illus_frame = QtWidgets.QFrame()
+        cal_illus_frame.setObjectName("IllustrationFrame")
+        cal_illus_frame.setStyleSheet(
+            "QFrame#IllustrationFrame { border: 1.5px solid #d0d4da; border-radius: 6px; background: white; }"
+        )
+        cal_illus_frame.setMaximumHeight(430)
+        cal_illus_layout = QtWidgets.QVBoxLayout(cal_illus_frame)
+        cal_illus_layout.setContentsMargins(3, 3, 3, 3)
+        cal_illus_layout.addWidget(cal_svg_widget)
+
+        cal_main_row = QtWidgets.QHBoxLayout()
+        cal_main_row.setSpacing(14)
+        cal_main_row.addLayout(cal_form_col, 3)
+        cal_main_row.addWidget(cal_illus_frame, 2)
+        cal_main_row.setAlignment(cal_illus_frame, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        calibration_layout.addLayout(cal_main_row, 1)
 
         self.pair_table = QtWidgets.QTableWidget(0, 3)
         self.pair_table.setHorizontalHeaderLabels(["Output name", "Sample group", "Solvent group"])
@@ -1308,6 +1809,27 @@ class DashboardWindow(QtWidgets.QMainWindow):
         pair_buttons.addStretch(1)
 
         _samples_page, samples_layout = step_page("Define outputs and finish")
+        samples_help = QtWidgets.QLabel(
+            "Group Roles: assign 1-based sequence group numbers to special positions. "
+            "GC = glassy-carbon standard (used to compute the absolute scaling factor). "
+            "Air = air-background measurement. Empty = empty-cell background. Use 0 if a position is absent. "
+            "Sample/solvent pairs: each row names one output file; the sample group scatters from the solution, "
+            "the solvent group is the matched buffer — subtracted to give the net macromolecule signal."
+        )
+        samples_help.setWordWrap(True)
+        samples_help.setObjectName("BuilderReview")
+        samples_help.setVisible(False)
+        samples_help_btn = QtWidgets.QToolButton()
+        samples_help_btn.setText("Output Help")
+        samples_help_btn.setCheckable(True)
+        samples_help_btn.setArrowType(QtCore.Qt.ArrowType.RightArrow)
+        samples_help_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        samples_help_btn.toggled.connect(samples_help.setVisible)
+        samples_help_btn.toggled.connect(
+            lambda v: samples_help_btn.setArrowType(QtCore.Qt.ArrowType.DownArrow if v else QtCore.Qt.ArrowType.RightArrow)
+        )
+        samples_layout.addWidget(samples_help_btn, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        samples_layout.addWidget(samples_help)
         group_roles = QtWidgets.QGroupBox("Sequence Group Roles")
         group_roles_form = QtWidgets.QFormLayout(group_roles)
         group_roles.setToolTip(
@@ -1494,7 +2016,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
     def schedule_save_builder_settings(self, *_args: object) -> None:
         if self._loading_builder_settings:
             return
-        QtCore.QTimer.singleShot(250, self.save_builder_settings)
+        self._builder_save_timer.start()  # resets the 250 ms window on each call
 
     def builder_settings_payload(self) -> dict[str, object]:
         pairs: list[dict[str, str]] = []
@@ -1540,7 +2062,9 @@ class DashboardWindow(QtWidgets.QMainWindow):
     def save_builder_settings(self) -> None:
         if self._loading_builder_settings:
             return
-        BUILDER_SETTINGS_PATH.write_text(json.dumps(self.builder_settings_payload(), indent=2), encoding="utf-8")
+        tmp = BUILDER_SETTINGS_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.builder_settings_payload(), indent=2), encoding="utf-8")
+        tmp.replace(BUILDER_SETTINGS_PATH)
 
     def load_builder_settings(self) -> None:
         if not BUILDER_SETTINGS_PATH.exists():
@@ -1634,8 +2158,18 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.schedule_save_builder_settings()
 
     def _set_reduction_mode(self, mode: str) -> None:
-        index = self.reduction_mode_combo.findData(mode if mode in {"asaxs", "saxs"} else "asaxs")
+        actual = mode if mode in {"asaxs", "saxs"} else "asaxs"
+        index = self.reduction_mode_combo.findData(actual)
         self.reduction_mode_combo.setCurrentIndex(max(0, index))
+        if hasattr(self, "_asaxs_card"):
+            self._asaxs_card.set_active(actual == "asaxs")
+            self._saxs_card.set_active(actual == "saxs")
+        if getattr(self, "_mode_svg_widget", None) is not None:
+            svg = _ASAXS_SVG if actual == "asaxs" else _SAXS_SVG
+            self._mode_svg_widget.load(QtCore.QByteArray(svg.encode()))
+
+    def _on_mode_card_selected(self, mode: str) -> None:
+        self._set_reduction_mode(mode)
 
     def _reduction_mode_changed(self) -> None:
         is_asaxs = self.reduction_mode_combo.currentData() == "asaxs"
@@ -1793,15 +2327,26 @@ class DashboardWindow(QtWidgets.QMainWindow):
         eig_files = self._files_from_edit(self.eig_files_edit)
         if pil_files or eig_files:
             pil, eig = len(pil_files), len(eig_files)
+            self.pil_count_label.setText(f"Pil300K: {pil} (selected)")
+            self.eig_count_label.setText(f"Eig1M: {eig} (selected)")
         else:
             raw_folder = self.raw_folder_edit.text().strip()
             if not raw_folder:
-                pil, eig = 0, 0
+                self.pil_count_label.setText("Pil300K: 0")
+                self.eig_count_label.setText("Eig1M: 0")
             else:
-                pil, eig = scan_detector_files(Path(raw_folder), "*.h5")
-        source = "selected" if pil_files or eig_files else "folder"
-        self.pil_count_label.setText(f"Pil300K: {pil} ({source})")
-        self.eig_count_label.setText(f"Eig1M: {eig} ({source})")
+                self._scan_serial += 1
+                worker = _FolderScanWorker(Path(raw_folder), self._scan_serial)
+                worker.signals.done.connect(self._on_scan_done)
+                self.pil_count_label.setText("Pil300K: scanning…")
+                self.eig_count_label.setText("Eig1M: scanning…")
+                QtCore.QThreadPool.globalInstance().start(worker)
+
+    def _on_scan_done(self, serial: int, pil: int, eig: int) -> None:
+        if serial != self._scan_serial:
+            return  # stale result from a superseded scan
+        self.pil_count_label.setText(f"Pil300K: {pil} (folder)")
+        self.eig_count_label.setText(f"Eig1M: {eig} (folder)")
 
     def _selected_files_changed(self) -> None:
         self._monitor_pv_scan_signature = None
@@ -2259,11 +2804,19 @@ class DashboardWindow(QtWidgets.QMainWindow):
     def refresh_current_curves(self) -> None:
         if not hasattr(self, "current_curve_plot"):
             return
-        self.current_curve_plot.clear()
-        self.current_curve_legend.clear()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            self.current_curve_plot.clear()
+            try:
+                self.current_curve_legend.clear()
+            except Exception:
+                # pyqtgraph may evict the legend from the scene during clear() depending on version.
+                self.current_curve_legend = self.current_curve_plot.addLegend(offset=(8, 8))
         self.current_curve_plot.setLogMode(x=self.curve_log_x_check.isChecked(), y=self.curve_log_y_check.isChecked())
-        self.current_curve_plot.setLabel("bottom", "q", units="A^-1")
+        self.current_curve_plot.setLabel("bottom", "q", units="Å⁻¹")
         self.current_curve_plot.setLabel("left", "I(q)", units="a.u.")
+        self.current_curve_plot.getAxis("bottom").enableAutoSIPrefix(False)
+        self.current_curve_plot.getAxis("left").enableAutoSIPrefix(False)
         index = self.selected_index()
         if index is None:
             self.current_curve_plot.setTitle("No task selected")
@@ -2424,7 +2977,11 @@ class DashboardWindow(QtWidgets.QMainWindow):
 
     def _load_default_queue(self) -> None:
         if self.queue_path.exists():
-            self.tasks = load_queue(self.queue_path)
+            try:
+                self.tasks = load_queue(self.queue_path)
+            except ValueError as exc:
+                self.log(f"Warning: queue file could not be loaded ({exc}). Starting with empty queue.")
+                self.tasks = []
             self._reset_stale_running_tasks()
             self.refresh_queue()
 
@@ -2432,7 +2989,11 @@ class DashboardWindow(QtWidgets.QMainWindow):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open queue", str(PROJECT_DIR), "JSON files (*.json)")
         if path:
             self.queue_path = Path(path)
-            self.tasks = load_queue(self.queue_path)
+            try:
+                self.tasks = load_queue(self.queue_path)
+            except ValueError as exc:
+                QtWidgets.QMessageBox.warning(self, "Queue file could not be loaded", str(exc))
+                self.tasks = []
             self._reset_stale_running_tasks()
             self.refresh_queue()
 
@@ -2786,6 +3347,16 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self._reset_detector_progress_labels("Queued")
         self.refresh_queue(select_row=queue_candidates[0])
         self.set_queue_locked(True, "Queue locked while running. Stop Queue is still available.")
+        # Disconnect and discard any previous runner before replacing it, so stale
+        # queued signals from the old thread cannot fire against new task indices.
+        if self.runner is not None:
+            for sig in (self.runner.message, self.runner.task_progress, self.runner.task_started,
+                        self.runner.task_finished, self.runner.task_skipped, self.runner.all_done):
+                try:
+                    sig.disconnect()
+                except RuntimeError:
+                    pass
+            self.runner.deleteLater()
         self.runner = TaskRunner(self.tasks, runnable, queue_candidates, run_any_status=run_any_status)
         self.runner.message.connect(self.log)
         self.runner.task_progress.connect(self._task_progress)
@@ -2863,7 +3434,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
     def _show_task_failed(self, index: int, message: str) -> None:
         task_name = self.tasks[index].task_name if 0 <= index < len(self.tasks) else "Task"
         self.current_stage_label.setText(f"{task_name}: Failed")
-        self.statusBar().showMessage(f"{task_name} failed. See message dialog and task tooltip.")
+        self.statusBar().showMessage(f"{task_name} failed — see Errors drawer for details.")
         details = message.strip() or "Unknown error"
         if len(details) > 6000:
             details = details[-6000:]
@@ -2873,7 +3444,8 @@ class DashboardWindow(QtWidgets.QMainWindow):
             if hasattr(self, "lower_tabs"):
                 self.lower_tabs.setCurrentWidget(self.error_view.parentWidget())
                 self.error_drawer_button.setChecked(True)
-        QtWidgets.QMessageBox.critical(self, "Task failed", f"{task_name}\n\n{details}")
+        self._error_count += 1
+        self.error_drawer_button.setText(f"Errors ({self._error_count})")
 
     def _task_skipped(self, index: int, message: str) -> None:
         if not (0 <= index < len(self.tasks)):
@@ -2918,35 +3490,46 @@ class DashboardWindow(QtWidgets.QMainWindow):
         if task.status != "Done":
             return
 
+        # Capture immutable values now — the task may be removed from self.tasks
+        # before the user clicks (12 s auto-dismiss window).
+        task_name = task.task_name
+        saxs_mode = task.is_saxs_mode()
+        output_path = task.output_path
+
         dialog = QtWidgets.QMessageBox(self)
+        dialog.setModal(False)
+        dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setIcon(QtWidgets.QMessageBox.Icon.Information)
         dialog.setWindowTitle("Reduction Complete")
-        dialog.setText(f"{task.task_name} finished successfully.")
+        dialog.setText(f"{task_name} finished successfully.")
         dialog.setInformativeText(
             "Next recommended step:\n"
             + (
                 "Open the I-q plot viewer to inspect/export the SAXS curves."
-                if task.is_saxs_mode()
+                if saxs_mode
                 else "Open XAnoS Components to extract ASAXS component curves."
             )
         )
         next_button = dialog.addButton(
-            "Open I-q Plot Viewer" if task.is_saxs_mode() else "Open XAnoS Components",
+            "Open I-q Plot Viewer" if saxs_mode else "Open XAnoS Components",
             QtWidgets.QMessageBox.ButtonRole.AcceptRole,
         )
         output_button = dialog.addButton("Open Output Folder", QtWidgets.QMessageBox.ButtonRole.ActionRole)
         dialog.addButton("Later", QtWidgets.QMessageBox.ButtonRole.RejectRole)
-        dialog.exec()
-        clicked = dialog.clickedButton()
-        if clicked is next_button:
-            if task.is_saxs_mode():
-                self.open_h5_iq_viewer_for_task(task)
-            else:
-                self.open_xanos_components_for_task(task)
-        elif clicked is output_button:
-            task.output_path.mkdir(parents=True, exist_ok=True)
-            if sys.platform.startswith("win"):
-                os.startfile(task.output_path)  # type: ignore[attr-defined]
+
+        def _on_button_clicked(btn) -> None:
+            if btn is next_button:
+                if saxs_mode:
+                    self.open_h5_iq_viewer_for_task(task)
+                else:
+                    self.open_xanos_components_for_task(task)
+            elif btn is output_button:
+                output_path.mkdir(parents=True, exist_ok=True)
+                QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(output_path)))
+
+        dialog.buttonClicked.connect(_on_button_clicked)
+        QtCore.QTimer.singleShot(12000, dialog.close)
+        dialog.show()
 
     def _reset_task_progress(self) -> None:
         self.overall_progress.setRange(0, 100)
@@ -2988,9 +3571,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
             return
         path = self.tasks[index].output_path
         path.mkdir(parents=True, exist_ok=True)
-        QtCore.QUrl.fromLocalFile(str(path))
-        if sys.platform.startswith("win"):
-            os.startfile(path)  # type: ignore[attr-defined]
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(path)))
 
     def open_h5_iq_viewer(self) -> None:
         if self.h5_iq_viewer is None:
@@ -3221,9 +3802,39 @@ class DashboardWindow(QtWidgets.QMainWindow):
         settings.endGroup()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802 - Qt override name.
-        self._save_window_layout()
+        if self.runner is not None and self.runner.isRunning():
+            box = QtWidgets.QMessageBox(self)
+            box.setWindowTitle("Reduction Running")
+            box.setText("A reduction task is currently running.")
+            box.setInformativeText(
+                "Stopping mid-task will mark it as Failed. You can re-run it afterwards."
+            )
+            wait_btn = box.addButton("Wait for Task, Then Exit", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+            stop_btn = box.addButton("Stop && Exit", QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
+            cancel_btn = box.addButton("Cancel", QtWidgets.QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(wait_btn)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is cancel_btn:
+                event.ignore()
+                return
+            if clicked is wait_btn:
+                self.runner.all_done.connect(self.close)
+                self.statusBar().showMessage("Waiting for current task to finish before closing…")
+                event.ignore()
+                return
+            # Stop & Exit: signal the thread and give it a short window to respond.
+            self.runner.request_stop_current()
+            self.runner.wait(2000)
+
+        # Always persist all state on the way out.
+        try:
+            self.save_queue()
+        except OSError:
+            pass
         self.save_builder_settings()
-        super().closeEvent(event)
+        self._save_window_layout()
+        event.accept()
 
 
 def main() -> int:
