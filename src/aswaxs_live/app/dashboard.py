@@ -724,6 +724,8 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self._output_dir_manually_overridden = False
         self._monitor_pv_scan_signature: tuple[str, str, str] | None = None
         self._scan_serial: int = 0
+        self._folder_scan_counts: tuple[int, int] = (0, 0)
+        self._calibration_dir: str = ""
         self._builder_save_timer = QtCore.QTimer(self)
         self._builder_save_timer.setSingleShot(True)
         self._builder_save_timer.setInterval(250)
@@ -1691,10 +1693,10 @@ class DashboardWindow(QtWidgets.QMainWindow):
         seq_form_col.addWidget(monitor_group)
         seq_form_col.addWidget(output_group)
         seq_form_col.addStretch(1)
-        pil_poni_row = self._file_browse_row(self.pil_poni_edit, "Choose Pil300K PONI", "PONI files (*.poni);;All files (*)")
-        pil_mask_row = self._file_browse_row(self.pil_mask_edit, "Choose Pil300K mask", "Mask files (*.msk *.edf *.npy);;All files (*)")
-        eig_poni_row = self._file_browse_row(self.eig_poni_edit, "Choose Eig1M PONI", "PONI files (*.poni);;All files (*)")
-        eig_mask_row = self._file_browse_row(self.eig_mask_edit, "Choose Eig1M mask", "Mask files (*.msk *.edf *.npy);;All files (*)")
+        pil_poni_row = self._calibration_browse_row(self.pil_poni_edit, "Choose Pil300K PONI", "PONI files (*.poni);;All files (*)")
+        pil_mask_row = self._calibration_browse_row(self.pil_mask_edit, "Choose Pil300K mask", "Mask files (*.msk *.edf *.npy);;All files (*)")
+        eig_poni_row = self._calibration_browse_row(self.eig_poni_edit, "Choose Eig1M PONI", "PONI files (*.poni);;All files (*)")
+        eig_mask_row = self._calibration_browse_row(self.eig_mask_edit, "Choose Eig1M mask", "Mask files (*.msk *.edf *.npy);;All files (*)")
         self.capillary_spin = self._double_spin(0.0001, 100.0, 0.15)
         self.gc_thickness_spin = self._double_spin(0.0001, 100.0, 0.1055)
         self.capillary_spin.setToolTip(
@@ -1973,6 +1975,16 @@ class DashboardWindow(QtWidgets.QMainWindow):
         layout.addWidget(browse)
         return row
 
+    def _calibration_browse_row(self, edit: QtWidgets.QLineEdit, title: str, file_filter: str) -> QtWidgets.QWidget:
+        row = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        browse = QtWidgets.QPushButton("Browse")
+        browse.clicked.connect(lambda _checked=False, target=edit, dialog_title=title, filt=file_filter: self.browse_calibration_file(target, dialog_title, filt))
+        layout.addWidget(edit, 1)
+        layout.addWidget(browse)
+        return row
+
     def _append_pair_row(self, name: str, sample: str, solvent: str) -> None:
         row = self.pair_table.rowCount()
         self.pair_table.insertRow(row)
@@ -2034,8 +2046,8 @@ class DashboardWindow(QtWidgets.QMainWindow):
             "output_dir": self.output_dir_edit.text(),
             "detector_mode": self.detector_mode_combo.currentData(),
             "reduction_mode": self.reduction_mode_combo.currentData(),
-            "pil300k_files": self._files_from_edit(self.pil_files_edit),
-            "eig1m_files": self._files_from_edit(self.eig_files_edit),
+            "pil300k_files": [],
+            "eig1m_files": [],
             "num_energies": self.energy_spin.value(),
             "num_groups": self.group_spin.value(),
             "num_frames": self.frame_spin.value(),
@@ -2322,6 +2334,21 @@ class DashboardWindow(QtWidgets.QMainWindow):
         edit.setText(path)
         self.save_builder_settings()
 
+    def browse_calibration_file(self, edit: QtWidgets.QLineEdit, title: str, file_filter: str) -> None:
+        current = edit.text().strip()
+        if current:
+            start = str(Path(current).expanduser().parent)
+        elif self._calibration_dir:
+            start = self._calibration_dir
+        else:
+            start = str(Path.home())
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, title, start, file_filter)
+        if not path:
+            return
+        edit.setText(path)
+        self._calibration_dir = str(Path(path).parent)
+        self.save_builder_settings()
+
     def scan_builder_folder(self) -> None:
         pil_files = self._files_from_edit(self.pil_files_edit)
         eig_files = self._files_from_edit(self.eig_files_edit)
@@ -2345,6 +2372,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
     def _on_scan_done(self, serial: int, pil: int, eig: int) -> None:
         if serial != self._scan_serial:
             return  # stale result from a superseded scan
+        self._folder_scan_counts = (pil, eig)
         self.pil_count_label.setText(f"Pil300K: {pil} (folder)")
         self.eig_count_label.setText(f"Eig1M: {eig} (folder)")
 
@@ -2446,7 +2474,6 @@ class DashboardWindow(QtWidgets.QMainWindow):
             combo.setCurrentText(current)
 
     def builder_task(self) -> TaskSpec:
-        self.scan_builder_folder()
         if not self.output_dir_edit.text().strip():
             self._update_auto_output_dir(force=True)
         pairs: list[AsaxsPair] = []
@@ -2472,7 +2499,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         if pil_files or eig_files:
             pil, eig = len(pil_files), len(eig_files)
         else:
-            pil, eig = scan_detector_files(Path(self.raw_folder_edit.text()), "*.h5")
+            pil, eig = self._folder_scan_counts
         return TaskSpec(
             task_name=self.task_name_edit.text().strip() or safe_name(Path(self.raw_folder_edit.text()).name),
             raw_folder=self.raw_folder_edit.text().strip(),
@@ -2506,7 +2533,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
         return value if value > 0 else None
 
     def add_task_from_builder(self) -> None:
-        import copy
+        import dataclasses
 
         try:
             task = self.builder_task()
@@ -2517,7 +2544,12 @@ class DashboardWindow(QtWidgets.QMainWindow):
         ok, message = preflight_task(task)
         task.status = "Ready" if ok else "Needs Attention"
         task.message = message
-        self.tasks.append(copy.deepcopy(task))
+        self.tasks.append(dataclasses.replace(
+            task,
+            pil300k_files=list(task.pil300k_files),
+            eig1m_files=list(task.eig1m_files),
+            asaxs_pairs=list(task.asaxs_pairs),
+        ))
         self.editing_index = None
         new_index = len(self.tasks) - 1
         self.refresh_queue(select_row=new_index)
@@ -3120,6 +3152,10 @@ class DashboardWindow(QtWidgets.QMainWindow):
             self.pil_mask_edit.setText(task.pil300k_mask)
             self.eig_poni_edit.setText(task.eig1m_poni)
             self.eig_mask_edit.setText(task.eig1m_mask)
+            for cal_path in [task.pil300k_poni, task.pil300k_mask, task.eig1m_poni, task.eig1m_mask]:
+                if cal_path and Path(cal_path).parent.exists():
+                    self._calibration_dir = str(Path(cal_path).parent)
+                    break
             self._set_combo_text(self.pil_monitor_combo, task.pil300k_monitor_key or "SPDS")
             self._set_combo_text(self.eig_monitor_combo, task.eig1m_monitor_key or "WPDS")
             self.capillary_spin.setValue(task.capillary_thickness)
@@ -3605,6 +3641,7 @@ class DashboardWindow(QtWidgets.QMainWindow):
             if self.pyfai_setup_window is None:
                 from aswaxs_live.tools.pyfai_setup import PreprocessingWindow
 
+                QtWidgets.QApplication.setStyle("Fusion")
                 self.pyfai_setup_window = PreprocessingWindow()
             self.pyfai_setup_window.show()
             self.pyfai_setup_window.raise_()

@@ -147,9 +147,6 @@ def preflight_task(task: TaskSpec) -> tuple[bool, str]:
         if task.has_selected_files(detector):
             if count != expected:
                 problems.append(_file_count_problem(detector, count, task, selected=True))
-            missing = [path for path in task.detector_files(detector) if not path.exists()]
-            if missing:
-                problems.append(f"{detector}: {len(missing)} selected files missing")
         elif count == 0:
             problems.append(f"{detector}: no files")
         elif count < expected:

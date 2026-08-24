@@ -327,6 +327,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.receiver_thread = QtCore.QThread(self); self.receiver = ZmqReceiver(endpoints)
         self.receiver.moveToThread(self.receiver_thread); self.receiver_thread.started.connect(self.receiver.run)
         self.receiver.image_received.connect(self.enqueue_file)
+        self.receiver.image_received.connect(self._log_received_message)
         self.receiver.message_stats.connect(self._on_message_stats)
         self.receiver.status.connect(self._append_log)
         self.receiver.error.connect(self._on_error)
@@ -386,6 +387,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def export_session_h5_to(self, destination: Path) -> Path:
         return export_temporary_analysis_h5(self.session_dir, destination, self.config.sample_name)
+
+    def _log_received_message(self, detector: str, path_str: str, payload: object) -> None:
+        if not self.log_box.isVisible():
+            return
+        display = "SAXS" if detector == "Pil300K" else "WAXS"
+        self.log_box.appendPlainText(f"[{display}] {Path(path_str).name}")
 
     def _append_log(self, text: str) -> None:
         self.log_box.appendPlainText(text)

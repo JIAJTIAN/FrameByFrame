@@ -13,6 +13,10 @@ QWidget {
     color: #20242a;
     font-size: 9pt;
 }
+QLabel {
+    color: #20242a;
+    background: transparent;
+}
 QGroupBox {
     background: #ffffff;
     border: 1px solid #c8ccd2;
