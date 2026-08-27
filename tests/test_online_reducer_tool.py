@@ -104,7 +104,7 @@ def test_online_curve_store_rejects_mixed_qc_series() -> None:
     try:
         store.frame_series([0, 1])
     except ValueError as exc:
-        assert "same experiment, detector" in str(exc)
+        assert "same detector" in str(exc)
     else:
         raise AssertionError("mixed detector curves were accepted for frame QC")
 
@@ -225,6 +225,52 @@ def test_checkpoint_registry_records_experiment_and_stage_dependencies(tmp_path:
         assert handle["/entry/checkpoints/group_averaging/written_items"][()] == 2
         dependencies = handle["/entry/checkpoints/group_averaging/input_checkpoint_ids_json"][()].decode()
         assert integration_uid in dependencies
+
+
+def test_engine_finalize_plan_exports_to_extracted(tmp_path: Path) -> None:
+    """finalize_plan() copies the analysis HDF5 to the canonical Extracted folder."""
+    from aswaxs_live.tools.online_reducer.engine import OnlineReductionEngine
+
+    poni = tmp_path / "test.poni"
+    mask = tmp_path / "mask.npy"
+    AzimuthalIntegrator(
+        dist=0.2, poni1=0.0016, poni2=0.0016, pixel1=0.0001, pixel2=0.0001,
+    ).save(str(poni))
+    np.save(mask, np.zeros((32, 32), dtype=np.uint8))
+    config = OnlineConfig(
+        pil300k_poni=str(poni), pil300k_mask=str(mask),
+        eig1m_poni=str(poni), eig1m_mask=str(mask),
+        num_frames=1, npt=50, settle_seconds=0,
+    )
+    session = tmp_path / "session"
+    engine = OnlineReductionEngine(config, session)
+    errors: list[str] = []
+    exported: list[list] = []
+    engine.error.connect(errors.append)
+    engine.plan_exported.connect(lambda _det, paths: exported.append(paths))
+    engine.initialize()
+
+    raw = tmp_path / "Experiment" / "Pil300K" / "frame_001.h5"
+    raw.parent.mkdir(parents=True)
+    with h5py.File(raw, "w") as fh:
+        fh.create_dataset("entry/data/data", data=np.ones((32, 32), dtype=np.float32) * 5)
+        nd = fh.create_group("entry/instrument/NDAttributes")
+        nd.create_dataset("Mono_Energy", data=12.0)
+        nd.create_dataset("SPDS", data=100.0)
+
+    engine.process_file("Pil300K", str(raw), {"image_path": str(raw), "experiment_title": "Experiment", "experiment_uid": "uid-e"})
+    engine.finalize_plan("Pil300K")
+    engine.shutdown()
+
+    assert not errors
+    assert exported, "plan_exported signal not emitted"
+    # Canonical location: {raw.parent.parent.parent}/Extracted/{raw.parent.parent.name}/Pil300K/*.h5
+    extracted_dir = tmp_path / "Extracted" / "Experiment" / "Pil300K"
+    exported_files = list(extracted_dir.glob("*.h5"))
+    assert exported_files, f"no HDF5 in {extracted_dir}"
+    # The exported HDF5 must have the live-frame table so the offline pipeline can resume.
+    with h5py.File(exported_files[0], "r") as fh:
+        assert "/entry/realtime/process_01_reduction/frames" in fh
 
 
 def test_online_engine_routes_experiments_to_separate_h5_checkpoints(tmp_path: Path) -> None:

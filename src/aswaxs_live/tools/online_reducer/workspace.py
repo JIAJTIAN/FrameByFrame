@@ -134,9 +134,10 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
         item.setToolTip(record.source_path)
         self.curve_list.addItem(item)
         self.selection_status.setText(f"{len(self.store.records)} reduced frame curve(s) available in this session.")
-        if self.curve_list.count() == 1:
-            item.setSelected(True)
-            self.plot_selected()
+        self.curve_list.clearSelection()
+        item.setSelected(True)
+        self.curve_list.scrollToItem(item)
+        self.plot_selected(switch_tab=False)
 
     @Slot(str, object, object)
     def update_detector_image(self, detector: str, image: object, metadata: object) -> None:
@@ -165,7 +166,7 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
     def selected_indices(self) -> list[int]:
         return sorted(int(item.data(QtCore.Qt.ItemDataRole.UserRole)) for item in self.curve_list.selectedItems())
 
-    def plot_selected(self) -> None:
+    def plot_selected(self, *, switch_tab: bool = True) -> None:
         indices = self.selected_indices()
         if not indices:
             self.selection_status.setText("Select one or more completed curves.")
@@ -185,7 +186,8 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
             self.curve_axis.legend(fontsize=7, loc="best")
         self.curve_figure.tight_layout()
         self.curve_canvas.draw_idle()
-        self.tabs.setCurrentIndex(0)
+        if switch_tab:
+            self.tabs.setCurrentIndex(0)
         suffix = " (first 100 shown)" if len(indices) > 100 else ""
         self.selection_status.setText(f"Plotted {min(len(indices), 100)} selected curve(s){suffix}.")
 

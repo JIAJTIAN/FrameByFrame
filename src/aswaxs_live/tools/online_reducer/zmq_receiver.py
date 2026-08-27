@@ -7,9 +7,9 @@ import zmq
 from aswaxs_live.app.qt import QtCore, Signal, Slot
 
 
-# Bluesky document types that carry no image data — silently ignored.
+# Bluesky document types that are always silently ignored.
 _SILENT_DOC_TYPES = frozenset({
-    "descriptor", "event", "event_page",
+    "descriptor",
     "datum", "datum_page", "bulk_datum", "bulk_events",
 })
 
@@ -32,10 +32,33 @@ def _resource_hdf5_path(doc: dict) -> Path | None:
     return Path(root) / resource_path
 
 
+def _event_hdf5_path(doc: dict, bluesky_name: str) -> str | None:
+    """Extract the HDF5 full file path from a Bluesky event document.
+
+    Area Detector publishes the file path written for each frame as
+    ``{detector}_hdf1_full_file_name`` in the event data dict.
+    Only the field for the configured detector name is checked — no fallback
+    scan, so a WAXS socket never accidentally claims a SAXS file.
+    Returns the raw path string (may be a posix server path), or None.
+    """
+    if not bluesky_name:
+        return None
+    data = doc.get("data", {})
+    key = f"{bluesky_name}_hdf1_full_file_name"
+    value = str(data.get(key, "")).strip()
+    if value and value.lower().endswith(".h5"):
+        return value
+    return None
+
+
 def _detector_matches(hdf5_path: Path, detector: str) -> bool:
-    """Return True if the file path appears to belong to this detector."""
-    name_lower = hdf5_path.name.lower()
-    return detector.lower() in name_lower
+    """Return True if the file path appears to belong to this detector.
+
+    An empty detector string is treated as a wildcard (matches everything).
+    """
+    if not detector:
+        return True
+    return detector.lower() in hdf5_path.name.lower()
 
 
 def parse_zmq_message(raw: bytes | str) -> tuple[str, dict] | None:
@@ -75,6 +98,7 @@ def parse_zmq_message(raw: bytes | str) -> tuple[str, dict] | None:
 class ZmqReceiver(QtCore.QObject):
     image_received = Signal(str, str, object)
     message_stats = Signal(str, int, str)
+    plan_stopped = Signal(str)  # detector key
     status = Signal(str)
     error = Signal(str)
     stopped = Signal()
@@ -83,13 +107,27 @@ class ZmqReceiver(QtCore.QObject):
         self,
         endpoints: dict[str, str],
         bluesky_names: dict[str, str] | None = None,
+        debug: bool = False,
+        remote_path_prefix: str = "",
+        local_path_prefix: str = "",
     ) -> None:
         super().__init__()
         self.endpoints = dict(endpoints)
         # Maps canonical detector key → Bluesky stream detector name used in filenames.
         # Defaults to the canonical key itself when not provided.
         self.bluesky_names: dict[str, str] = dict(bluesky_names) if bluesky_names else {}
+        self.debug = debug
+        self.remote_path_prefix = remote_path_prefix.rstrip("/\\")
+        self.local_path_prefix = local_path_prefix.rstrip("/\\")
         self._running = False
+
+    def _apply_path_prefix(self, path_str: str) -> Path:
+        """Replace a server-side posix prefix with the local mount path."""
+        if self.remote_path_prefix and self.local_path_prefix:
+            if path_str.startswith(self.remote_path_prefix):
+                suffix = path_str[len(self.remote_path_prefix):].lstrip("/\\")
+                return Path(self.local_path_prefix) / suffix
+        return Path(path_str)
 
     @Slot()
     def run(self) -> None:
@@ -118,6 +156,8 @@ class ZmqReceiver(QtCore.QObject):
                     try:
                         frames = sock.recv_multipart()
                         raw = frames[-1]
+                        if self.debug:
+                            self.status.emit(f"[ZMQ RAW] {detector}: {raw!r}")
                         result = parse_zmq_message(raw)
                         if result is None:
                             continue  # silently skip (event, descriptor, datum, …)
@@ -137,14 +177,28 @@ class ZmqReceiver(QtCore.QObject):
                             self.status.emit(
                                 f"Scan stopped — status={exit_status}, events={num_events}"
                             )
+                            self.plan_stopped.emit(detector)
+
+                        elif doc_type in ("event", "event_page"):
+                            bluesky_name = self.bluesky_names.get(detector, detector)
+                            raw_path = _event_hdf5_path(doc_body, bluesky_name)
+                            if raw_path is not None:
+                                hdf5_path = self._apply_path_prefix(raw_path)
+                                counts[detector] += 1
+                                self.image_received.emit(detector, str(hdf5_path), doc_body)
+                                self.message_stats.emit(
+                                    detector, counts[detector], endpoint_for[sock]
+                                )
 
                         elif doc_type == "resource":
                             hdf5_path = _resource_hdf5_path(doc_body)
                             if hdf5_path is not None:
-                                # When both detectors share one endpoint, filter by filename.
-                                # When on separate endpoints, emit regardless.
-                                all_detectors = list(sockets.values())
-                                same_endpoint = all_detectors.count(all_detectors[0]) == len(all_detectors)
+                                hdf5_path = self._apply_path_prefix(str(hdf5_path))
+                                # When both detectors share one ZMQ endpoint, filter by filename
+                                # so each resource doc is claimed by at most one detector.
+                                # When on separate endpoints, trust the endpoint and skip filtering.
+                                all_endpoint_urls = list(endpoint_for.values())
+                                same_endpoint = len(set(all_endpoint_urls)) == 1
                                 match_name = self.bluesky_names.get(detector, detector)
                                 if same_endpoint and not _detector_matches(hdf5_path, match_name):
                                     continue

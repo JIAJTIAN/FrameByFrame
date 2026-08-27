@@ -4,6 +4,7 @@ import argparse
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 import sys
 from typing import TextIO
 
@@ -50,6 +51,7 @@ class OnlineReductionEngine(QtCore.QObject):
     image_ready = Signal(str, object, object)
     experiment_discovered = Signal(object)
     output_updated = Signal(str)
+    plan_exported = Signal(str, list)  # detector, list[str] of canonical paths written
     error = Signal(str)
     ready = Signal()
     stopped = Signal()
@@ -351,6 +353,51 @@ class OnlineReductionEngine(QtCore.QObject):
         )
         self.log.emit(f"{identity.title}: updated stitched 1-D detector averages -> {combined.name}")
         self.output_updated.emit(str(combined))
+
+    @Slot(str)
+    def finalize_plan(self, detector: str) -> None:
+        """Flush all open runtimes for *detector*, write final checkpoints, and
+        copy the analysis HDF5 files to each experiment's canonical Extracted folder.
+
+        Called automatically when the Bluesky ZMQ stream emits a ``stop`` document.
+        By the time this slot fires (via a queued Qt connection) all prior
+        ``process_file`` calls from the same stream will have completed.
+        """
+        written: list[str] = []
+        identities_to_stitch: dict[str, ExperimentIdentity] = {}
+        for (exp_uid, det), runtime in list(self._runtimes.items()):
+            if det != detector:
+                continue
+            try:
+                runtime.state.write_analysis_h5(force=True)
+                self._write_detector_checkpoints(runtime, final=True)
+                src = runtime.state.analysis_path
+                dst_dir = runtime.identity.canonical_output_root / detector
+                dst_dir.mkdir(parents=True, exist_ok=True)
+                dst = dst_dir / src.name
+                shutil.copy2(src, dst)
+                written.append(str(dst))
+                self.log.emit(
+                    f"{detector}: plan complete — exported to {dst}"
+                )
+                identities_to_stitch[exp_uid] = runtime.identity
+            except Exception as exc:
+                self.error.emit(f"{detector}: auto-export failed: {exc}")
+
+        for identity in identities_to_stitch.values():
+            try:
+                self._update_stitching(identity, final=True)
+                # Also copy the combined stitching file if it was produced.
+                combined_src = self.session_dir / identity.storage_name / f"{identity.safe_title}_analysis.h5"
+                if combined_src.is_file():
+                    combined_dst = identity.canonical_output_root / combined_src.name
+                    shutil.copy2(combined_src, combined_dst)
+                    written.append(str(combined_dst))
+            except Exception as exc:
+                self.error.emit(f"{identity.title}: stitching/export failed: {exc}")
+
+        if written:
+            self.plan_exported.emit(detector, written)
 
     @Slot()
     def shutdown(self) -> None:

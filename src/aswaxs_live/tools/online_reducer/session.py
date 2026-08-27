@@ -79,20 +79,20 @@ class OnlineCurveStore:
         if len(indices) < 2:
             raise ValueError("Select at least two reduced curves for frame-stability QC.")
         records = [self.records[index] for index in indices]
-        series_keys = {
-            (record.experiment_uid, record.detector, record.energy_index, record.group_index)
-            for record in records
-        }
-        if len(series_keys) != 1:
-            raise ValueError("QC curves must come from the same experiment, detector, energy, and measurement group.")
+        detector_keys = {record.detector for record in records}
+        if len(detector_keys) != 1:
+            raise ValueError("QC curves must come from the same detector (cannot mix SAXS and WAXS).")
         records.sort(key=lambda record: record.sequence_index)
-        _experiment_uid, detector, energy, group = next(iter(series_keys))
-        label = f"{records[0].experiment_title} | {detector} | M{group:04d} | online selection"
+        detector = next(iter(detector_keys))
+        label = f"{records[0].experiment_title} | {detector} | online selection ({len(records)} frames)"
+        # Per-group frame_index is always 1 for online data (num_frames=1).
+        # Use sequential position in this selection so QC axes are meaningful.
+        sequential_frame_index = np.arange(1, len(records) + 1, dtype=int)
         series = FrameSeries(
             q=np.stack([record.q for record in records]),
             intensity=np.stack([record.intensity for record in records]),
             sigma=np.stack([record.sigma for record in records]),
-            frame_index=np.asarray([record.frame_index for record in records], dtype=int),
+            frame_index=sequential_frame_index,
             sequence_index=np.asarray([record.sequence_index for record in records], dtype=int),
             energy_index=np.asarray([record.energy_index for record in records], dtype=int),
             group_index=np.asarray([record.group_index for record in records], dtype=int),

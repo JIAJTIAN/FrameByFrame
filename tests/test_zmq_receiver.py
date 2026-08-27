@@ -16,6 +16,7 @@ import zmq
 
 from aswaxs_live.tools.online_reducer.zmq_receiver import (
     ZmqReceiver,
+    _event_hdf5_path,
     _resource_hdf5_path,
     parse_zmq_message,
 )
@@ -85,9 +86,14 @@ def test_parse_bluesky_stop_returns_stop_doc() -> None:
     assert doc_type == "stop"
 
 
-def test_parse_bluesky_event_returns_none() -> None:
+def test_parse_bluesky_event_returns_event_doc() -> None:
+    # Events are no longer silently dropped — the receiver loop handles them.
     msg = json.dumps(["event", {"seq_num": 1, "data": {}}]).encode()
-    assert parse_zmq_message(msg) is None
+    result = parse_zmq_message(msg)
+    assert result is not None
+    doc_type, doc_body = result
+    assert doc_type == "event"
+    assert doc_body["seq_num"] == 1
 
 
 def test_parse_bluesky_descriptor_returns_none() -> None:
@@ -142,6 +148,67 @@ def test_resource_hdf5_path_non_hdf5_returns_none() -> None:
 def test_resource_hdf5_path_missing_resource_path_returns_none() -> None:
     doc = {"spec": "AD_HDF5", "root": "/data"}
     assert _resource_hdf5_path(doc) is None
+
+
+# ---------------------------------------------------------------------------
+# _event_hdf5_path helper
+# ---------------------------------------------------------------------------
+
+
+def test_event_hdf5_path_finds_hdf1_full_file_name() -> None:
+    doc = {
+        "data": {
+            "Pil300K_Sim_hdf1_full_file_name": "/home/server/data/Sim_Test_S_0011_0001.h5",
+            "Pil300K_Sim_stats1_total": 432083.0,
+        }
+    }
+    result = _event_hdf5_path(doc, "Pil300K_Sim")
+    assert result == "/home/server/data/Sim_Test_S_0011_0001.h5"
+
+
+def test_event_hdf5_path_returns_none_when_no_h5() -> None:
+    doc = {"data": {"Pil300K_Sim_stats1_total": 432083.0}}
+    assert _event_hdf5_path(doc, "Pil300K_Sim") is None
+
+
+def test_event_hdf5_path_does_not_match_other_detector_field() -> None:
+    # WAXS socket must not claim a SAXS file via accidental fallback
+    doc = {"data": {"Pil300K_Sim_hdf1_full_file_name": "/data/Pil300K_frame.h5"}}
+    assert _event_hdf5_path(doc, "Eig1M") is None
+
+
+# ---------------------------------------------------------------------------
+# ZmqReceiver.path prefix substitution
+# ---------------------------------------------------------------------------
+
+
+def test_receiver_applies_path_prefix_substitution() -> None:
+    try:
+        from aswaxs_live.app.qt import QtCore, QtWidgets
+    except Exception:
+        pytest.skip("Qt not available")
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    receiver = ZmqReceiver(
+        {"Pil300K": "tcp://127.0.0.1:1"},
+        bluesky_names={"Pil300K": "Pil300K_Sim"},
+        remote_path_prefix="/home/server/data",
+        local_path_prefix=r"Y:\data",
+    )
+    from pathlib import Path
+    result = receiver._apply_path_prefix("/home/server/data/ASWAXS/frame.h5")
+    assert result == Path(r"Y:\data\ASWAXS\frame.h5")
+
+
+def test_receiver_no_prefix_substitution_when_not_configured() -> None:
+    try:
+        from aswaxs_live.app.qt import QtCore, QtWidgets
+    except Exception:
+        pytest.skip("Qt not available")
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    receiver = ZmqReceiver({"Pil300K": "tcp://127.0.0.1:1"})
+    from pathlib import Path
+    result = receiver._apply_path_prefix("/home/server/data/frame.h5")
+    assert result == Path("/home/server/data/frame.h5")
 
 
 # ---------------------------------------------------------------------------
@@ -246,17 +313,21 @@ def test_zmq_receiver_delivers_bluesky_resource_message() -> None:
     assert "Pil300K_scan5.h5" in path
 
 
-def test_zmq_receiver_silently_skips_bluesky_event_docs() -> None:
+def test_zmq_receiver_skips_bluesky_event_docs_without_hdf5_path() -> None:
     ctx = zmq.Context.instance()
     pub, port = _bind_pub_socket(ctx)
     endpoint = f"tcp://127.0.0.1:{port}"
     time.sleep(0.15)
 
     def _publish():
-        for doc_type in ("start", "descriptor", "event", "datum", "stop"):
-            time.sleep(0.1)
+        # Events with no .h5 data should not trigger image_received
+        for doc_type in ("start", "descriptor", "datum", "stop"):
+            time.sleep(0.05)
             pub.send_multipart([json.dumps([doc_type, {"uid": "x"}]).encode()])
-        # Then send one good message
+        # Event with no h5 path — should be silently ignored
+        time.sleep(0.05)
+        pub.send_multipart([json.dumps(["event", {"data": {"some_val": 1.0}}]).encode()])
+        # Then one good legacy message
         time.sleep(0.1)
         pub.send_multipart([json.dumps({"image_path": "/run/Pil300K/good.h5"}).encode()])
 
@@ -266,6 +337,61 @@ def test_zmq_receiver_silently_skips_bluesky_event_docs() -> None:
 
     assert len(received) == 1
     assert len(errors) == 0, f"unexpected errors: {errors}"
+
+
+def test_zmq_receiver_delivers_event_hdf5_path() -> None:
+    try:
+        from aswaxs_live.app.qt import QtCore, QtWidgets
+    except Exception:
+        pytest.skip("Qt not available in this environment")
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    ctx = zmq.Context.instance()
+    pub, port = _bind_pub_socket(ctx)
+    endpoint = f"tcp://127.0.0.1:{port}"
+    time.sleep(0.15)
+
+    def _publish():
+        time.sleep(0.25)
+        event_doc = ["event", {
+            "seq_num": 1,
+            "data": {
+                "Pil300K_Sim_hdf1_full_file_name": "/home/server/data/Sim_Test_S_0011_0001.h5",
+                "Pil300K_Sim_stats1_total": 432083.0,
+            },
+            "filled": {"Pil300K_Sim_image": False},
+        }]
+        pub.send_multipart([json.dumps(event_doc).encode()])
+
+    threading.Thread(target=_publish, daemon=True).start()
+
+    received: list[tuple] = []
+    errors: list[str] = []
+    receiver = ZmqReceiver(
+        {"Pil300K": endpoint},
+        bluesky_names={"Pil300K": "Pil300K_Sim"},
+    )
+    thread = QtCore.QThread()
+    receiver.moveToThread(thread)
+    thread.started.connect(receiver.run)
+    receiver.image_received.connect(lambda det, path, pl: received.append((det, path, pl)))
+    receiver.error.connect(errors.append)
+    thread.start()
+
+    deadline = time.monotonic() + 3.0
+    while len(received) < 1 and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
+
+    receiver.stop()
+    thread.quit()
+    thread.wait(2000)
+    pub.close(0)
+
+    assert len(received) == 1, f"expected 1, got {len(received)}; errors={errors}"
+    det, path, _ = received[0]
+    assert det == "Pil300K"
+    assert "Sim_Test_S_0011_0001.h5" in path
 
 
 def test_zmq_receiver_increments_count_across_messages() -> None:

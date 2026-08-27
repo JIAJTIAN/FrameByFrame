@@ -55,6 +55,9 @@ def export_experiments_to_canonical(
 
 class MainWindow(QtWidgets.QMainWindow):
     enqueue_file = Signal(str, str, object)
+    # Forwarded through the main-thread event queue so finalize_plan reaches
+    # engine_thread only after all prior enqueue_file events have been posted.
+    _forward_plan_stopped = Signal(str)
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -125,10 +128,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.saxs_det_name.setPlaceholderText("Pil300K")
         self.waxs_det_name = QtWidgets.QLineEdit()
         self.waxs_det_name.setPlaceholderText("Eig1M")
+        self.remote_path_prefix = QtWidgets.QLineEdit()
+        self.remote_path_prefix.setPlaceholderText("/home/chem_epics/.../data/ASWAXS/User")
+        self.remote_path_prefix.setToolTip(
+            "Server-side path prefix in the Bluesky stream (posix). "
+            "Replaced by the local path prefix below when assembling file paths."
+        )
+        self.local_path_prefix = QtWidgets.QLineEdit()
+        self.local_path_prefix.setPlaceholderText(r"Y:\ASWAXS\User")
+        self.local_path_prefix.setToolTip(
+            "Local Windows path where the beamline data directory is mounted. "
+            "Replaces the remote prefix above."
+        )
+        self.zmq_debug = QtWidgets.QCheckBox("Log raw ZMQ frames")
+        self.zmq_debug.setToolTip(
+            "Print every raw ZMQ frame to the Messages log before parsing. "
+            "Useful for diagnosing beamline path or format issues."
+        )
         zmq_form.addRow("SAXS endpoint", self.saxs_endpoint)
         zmq_form.addRow("WAXS endpoint", self.waxs_endpoint)
         zmq_form.addRow("SAXS detector name", self.saxs_det_name)
         zmq_form.addRow("WAXS detector name", self.waxs_det_name)
+        zmq_form.addRow("Remote path prefix", self.remote_path_prefix)
+        zmq_form.addRow("Local path prefix", self.local_path_prefix)
+        zmq_form.addRow("", self.zmq_debug)
         form_root.addWidget(zmq_group)
 
         cal_group = QtWidgets.QGroupBox("Detector calibration")
@@ -285,6 +308,7 @@ class MainWindow(QtWidgets.QMainWindow):
         c = self.config
         mapping = [(self.sample,c.sample_name),(self.saxs_endpoint,c.saxs_endpoint),(self.waxs_endpoint,c.waxs_endpoint),
                    (self.saxs_det_name,c.saxs_detector_name),(self.waxs_det_name,c.waxs_detector_name),
+                   (self.remote_path_prefix,c.remote_path_prefix),(self.local_path_prefix,c.local_path_prefix),
                    (self.pil_poni,c.pil300k_poni),(self.pil_mask,c.pil300k_mask),(self.eig_poni,c.eig1m_poni),(self.eig_mask,c.eig1m_mask),
                    (self.pil_monitor,c.pil300k_monitor_key),(self.eig_monitor,c.eig1m_monitor_key),(self.dataset,c.dataset_path)]
         for widget, value in mapping: widget.setText(str(value))
@@ -298,6 +322,8 @@ class MainWindow(QtWidgets.QMainWindow):
             saxs_endpoint=self.saxs_endpoint.text().strip(), waxs_endpoint=self.waxs_endpoint.text().strip(),
             saxs_detector_name=self.saxs_det_name.text().strip() or "Pil300K",
             waxs_detector_name=self.waxs_det_name.text().strip() or "Eig1M",
+            remote_path_prefix=self.remote_path_prefix.text().strip(),
+            local_path_prefix=self.local_path_prefix.text().strip(),
             pil300k_poni=self.pil_poni.text().strip(), pil300k_mask=self.pil_mask.text().strip(),
             eig1m_poni=self.eig_poni.text().strip(), eig1m_mask=self.eig_mask.text().strip(),
             num_frames=self.frames.value(),
@@ -324,7 +350,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.engine.image_ready.connect(self.analysis_workspace.update_detector_image)
         self.engine.experiment_discovered.connect(self._on_experiment_discovered)
         self.engine.output_updated.connect(self._on_output_updated)
+        self.engine.plan_exported.connect(self._on_plan_exported)
         self.engine.ready.connect(self._start_receiver); self.enqueue_file.connect(self.engine.process_file)
+        self._forward_plan_stopped.connect(self.engine.finalize_plan)
         self.engine.stopped.connect(self.engine_thread.quit); self.engine_thread.finished.connect(self._on_engine_stopped)
         self.engine_thread.start(); self._set_running(True)
 
@@ -338,8 +366,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._last_received.clear()
         self._message_counts.clear()
         self.receiver_thread = QtCore.QThread(self)
-        self.receiver = ZmqReceiver(endpoints, bluesky_names=bluesky_names)
+        self.receiver = ZmqReceiver(
+            endpoints,
+            bluesky_names=bluesky_names,
+            debug=self.zmq_debug.isChecked(),
+            remote_path_prefix=self.config.remote_path_prefix,
+            local_path_prefix=self.config.local_path_prefix,
+        )
         self.receiver.moveToThread(self.receiver_thread); self.receiver_thread.started.connect(self.receiver.run)
+        self.receiver.plan_stopped.connect(self._forward_plan_stopped)
         self.receiver.image_received.connect(self.enqueue_file)
         self.receiver.image_received.connect(self._log_received_message)
         self.receiver.message_stats.connect(self._on_message_stats)
@@ -377,6 +412,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_output_updated(self, path_text: str) -> None:
         self._session_outputs.add(Path(path_text).resolve())
+
+    def _on_plan_exported(self, detector: str, paths: list) -> None:
+        label = "SAXS" if detector == "Pil300K" else "WAXS"
+        destinations = sorted({str(Path(p).parent) for p in paths})
+        self.status_label.setText(
+            f"{label} plan saved — {len(paths)} HDF5 file(s) exported to Extracted."
+        )
+        self._append_log(
+            f"[{label}] Plan auto-exported to Extracted:\n" + "\n".join(destinations)
+        )
 
     def _on_experiment_discovered(self, metadata: object) -> None:
         values = {str(key): str(value) for key, value in dict(metadata).items()}
