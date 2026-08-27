@@ -10,6 +10,8 @@ class OnlineConfig:
     sample_name: str = "online_aswaxs"
     saxs_endpoint: str = "tcp://164.54.169.92:5551"
     waxs_endpoint: str = "tcp://164.54.169.92:5552"
+    saxs_detector_name: str = "Pil300K"
+    waxs_detector_name: str = "Eig1M"
     pil300k_poni: str = ""
     pil300k_mask: str = ""
     eig1m_poni: str = ""

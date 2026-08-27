@@ -121,8 +121,14 @@ class MainWindow(QtWidgets.QMainWindow):
         zmq_form = QtWidgets.QFormLayout(zmq_group)
         self.saxs_endpoint = QtWidgets.QLineEdit()
         self.waxs_endpoint = QtWidgets.QLineEdit()
-        zmq_form.addRow("Pil300K / SAXS", self.saxs_endpoint)
-        zmq_form.addRow("Eig1M / WAXS", self.waxs_endpoint)
+        self.saxs_det_name = QtWidgets.QLineEdit()
+        self.saxs_det_name.setPlaceholderText("Pil300K")
+        self.waxs_det_name = QtWidgets.QLineEdit()
+        self.waxs_det_name.setPlaceholderText("Eig1M")
+        zmq_form.addRow("SAXS endpoint", self.saxs_endpoint)
+        zmq_form.addRow("WAXS endpoint", self.waxs_endpoint)
+        zmq_form.addRow("SAXS detector name", self.saxs_det_name)
+        zmq_form.addRow("WAXS detector name", self.waxs_det_name)
         form_root.addWidget(zmq_group)
 
         cal_group = QtWidgets.QGroupBox("Detector calibration")
@@ -278,6 +284,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _load_config_into_ui(self) -> None:
         c = self.config
         mapping = [(self.sample,c.sample_name),(self.saxs_endpoint,c.saxs_endpoint),(self.waxs_endpoint,c.waxs_endpoint),
+                   (self.saxs_det_name,c.saxs_detector_name),(self.waxs_det_name,c.waxs_detector_name),
                    (self.pil_poni,c.pil300k_poni),(self.pil_mask,c.pil300k_mask),(self.eig_poni,c.eig1m_poni),(self.eig_mask,c.eig1m_mask),
                    (self.pil_monitor,c.pil300k_monitor_key),(self.eig_monitor,c.eig1m_monitor_key),(self.dataset,c.dataset_path)]
         for widget, value in mapping: widget.setText(str(value))
@@ -289,6 +296,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return OnlineConfig(
             sample_name=self.sample.text().strip(),
             saxs_endpoint=self.saxs_endpoint.text().strip(), waxs_endpoint=self.waxs_endpoint.text().strip(),
+            saxs_detector_name=self.saxs_det_name.text().strip() or "Pil300K",
+            waxs_detector_name=self.waxs_det_name.text().strip() or "Eig1M",
             pil300k_poni=self.pil_poni.text().strip(), pil300k_mask=self.pil_mask.text().strip(),
             eig1m_poni=self.eig_poni.text().strip(), eig1m_mask=self.eig_mask.text().strip(),
             num_frames=self.frames.value(),
@@ -321,10 +330,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _start_receiver(self) -> None:
         endpoints = {"Pil300K": self.config.saxs_endpoint, "Eig1M": self.config.waxs_endpoint}
+        bluesky_names = {
+            "Pil300K": self.config.saxs_detector_name,
+            "Eig1M": self.config.waxs_detector_name,
+        }
         self._endpoints = dict(endpoints)
         self._last_received.clear()
         self._message_counts.clear()
-        self.receiver_thread = QtCore.QThread(self); self.receiver = ZmqReceiver(endpoints)
+        self.receiver_thread = QtCore.QThread(self)
+        self.receiver = ZmqReceiver(endpoints, bluesky_names=bluesky_names)
         self.receiver.moveToThread(self.receiver_thread); self.receiver_thread.started.connect(self.receiver.run)
         self.receiver.image_received.connect(self.enqueue_file)
         self.receiver.image_received.connect(self._log_received_message)

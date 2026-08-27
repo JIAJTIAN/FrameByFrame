@@ -79,9 +79,16 @@ class ZmqReceiver(QtCore.QObject):
     error = Signal(str)
     stopped = Signal()
 
-    def __init__(self, endpoints: dict[str, str]) -> None:
+    def __init__(
+        self,
+        endpoints: dict[str, str],
+        bluesky_names: dict[str, str] | None = None,
+    ) -> None:
         super().__init__()
         self.endpoints = dict(endpoints)
+        # Maps canonical detector key → Bluesky stream detector name used in filenames.
+        # Defaults to the canonical key itself when not provided.
+        self.bluesky_names: dict[str, str] = dict(bluesky_names) if bluesky_names else {}
         self._running = False
 
     @Slot()
@@ -138,7 +145,8 @@ class ZmqReceiver(QtCore.QObject):
                                 # When on separate endpoints, emit regardless.
                                 all_detectors = list(sockets.values())
                                 same_endpoint = all_detectors.count(all_detectors[0]) == len(all_detectors)
-                                if same_endpoint and not _detector_matches(hdf5_path, detector):
+                                match_name = self.bluesky_names.get(detector, detector)
+                                if same_endpoint and not _detector_matches(hdf5_path, match_name):
                                     continue
                                 counts[detector] += 1
                                 self.image_received.emit(detector, str(hdf5_path), doc_body)
