@@ -4,24 +4,76 @@ import json
 from pathlib import Path
 
 import zmq
-from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
+from aswaxs_live.app.qt import QtCore, Signal, Slot
 
 
-def parse_image_message(raw: bytes | str) -> tuple[Path, dict]:
-    """Parse the shared reducer's JSON/image_path message contract."""
+# Bluesky document types that carry no image data — silently ignored.
+_SILENT_DOC_TYPES = frozenset({
+    "descriptor", "event", "event_page",
+    "datum", "datum_page", "bulk_datum", "bulk_events",
+})
+
+# Area Detector HDF5 resource spec strings (case-insensitive check).
+_HDF5_SPEC_KEYWORDS = ("HDF5", "HDF")
+
+
+def _resource_hdf5_path(doc: dict) -> Path | None:
+    """Return the HDF5 file path from a Bluesky resource document, or None."""
+    spec = str(doc.get("spec", "")).upper()
+    if not any(kw in spec for kw in _HDF5_SPEC_KEYWORDS):
+        return None
+    root = str(doc.get("root", "")).strip()
+    resource_path = str(doc.get("resource_path", "")).strip()
+    if not resource_path:
+        return None
+    path_semantics = str(doc.get("path_semantics", "posix"))
+    if path_semantics == "absolute" or not root:
+        return Path(resource_path)
+    return Path(root) / resource_path
+
+
+def _detector_matches(hdf5_path: Path, detector: str) -> bool:
+    """Return True if the file path appears to belong to this detector."""
+    name_lower = hdf5_path.name.lower()
+    return detector.lower() in name_lower
+
+
+def parse_zmq_message(raw: bytes | str) -> tuple[str, dict] | None:
+    """
+    Parse a ZMQ message from either Bluesky or legacy format.
+
+    Returns (doc_type, doc_body) where doc_type is one of:
+      "start", "stop", "resource", "image_path"  — caller handles each.
+    Returns None for silently-skipped document types.
+    Raises ValueError for truly malformed messages.
+    """
     text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
     payload = json.loads(text)
-    if not isinstance(payload, dict):
-        raise ValueError("ZMQ payload must be a JSON object")
-    image_path = str(payload.get("image_path", "")).strip()
-    if not image_path:
-        raise ValueError("Missing 'image_path' field")
-    return Path(image_path), payload
+
+    # Bluesky RunEngine format: ["doc_type", {doc_body}]
+    if isinstance(payload, list) and len(payload) == 2:
+        doc_type, doc_body = payload
+        if not isinstance(doc_type, str) or not isinstance(doc_body, dict):
+            raise ValueError(
+                f"Bluesky list payload must be [str, dict], "
+                f"got [{type(doc_type).__name__}, {type(doc_body).__name__}]"
+            )
+        if doc_type in _SILENT_DOC_TYPES:
+            return None
+        return doc_type, doc_body
+
+    # Legacy format: {"image_path": "..."}
+    if isinstance(payload, dict):
+        image_path = str(payload.get("image_path", "")).strip()
+        if not image_path:
+            raise ValueError("Missing 'image_path' in legacy ZMQ message")
+        return "image_path", payload
+
+    raise ValueError(f"Unexpected payload type: {type(payload).__name__}")
 
 
 class ZmqReceiver(QtCore.QObject):
     image_received = Signal(str, str, object)
-    # Emitted after each successfully parsed message: (detector, total_count, endpoint)
     message_stats = Signal(str, int, str)
     status = Signal(str)
     error = Signal(str)
@@ -55,14 +107,57 @@ class ZmqReceiver(QtCore.QObject):
                     if not event & zmq.POLLIN:
                         continue
                     detector = sockets[sock]
+                    raw = b""
                     try:
                         frames = sock.recv_multipart()
                         raw = frames[-1]
-                        path, payload = parse_image_message(raw)
-                        counts[detector] += 1
-                        self.image_received.emit(detector, str(path), payload)
-                        self.message_stats.emit(detector, counts[detector], endpoint_for[sock])
-                    except Exception as exc:  # keep the listener alive after a bad message
+                        result = parse_zmq_message(raw)
+                        if result is None:
+                            continue  # silently skip (event, descriptor, datum, …)
+                        doc_type, doc_body = result
+
+                        if doc_type == "start":
+                            scan_id = doc_body.get("scan_id", "?")
+                            plan = doc_body.get("plan_name", "?")
+                            dets = doc_body.get("detectors", [])
+                            self.status.emit(
+                                f"Scan {scan_id} started — plan={plan}, detectors={dets}"
+                            )
+
+                        elif doc_type == "stop":
+                            exit_status = doc_body.get("exit_status", "?")
+                            num_events = doc_body.get("num_events", {})
+                            self.status.emit(
+                                f"Scan stopped — status={exit_status}, events={num_events}"
+                            )
+
+                        elif doc_type == "resource":
+                            hdf5_path = _resource_hdf5_path(doc_body)
+                            if hdf5_path is not None:
+                                # When both detectors share one endpoint, filter by filename.
+                                # When on separate endpoints, emit regardless.
+                                all_detectors = list(sockets.values())
+                                same_endpoint = all_detectors.count(all_detectors[0]) == len(all_detectors)
+                                if same_endpoint and not _detector_matches(hdf5_path, detector):
+                                    continue
+                                counts[detector] += 1
+                                self.image_received.emit(detector, str(hdf5_path), doc_body)
+                                self.message_stats.emit(
+                                    detector, counts[detector], endpoint_for[sock]
+                                )
+
+                        elif doc_type == "image_path":
+                            # Legacy {"image_path": "..."} contract
+                            path = Path(str(doc_body.get("image_path", ""))).expanduser().resolve()
+                            counts[detector] += 1
+                            self.image_received.emit(detector, str(path), doc_body)
+                            self.message_stats.emit(
+                                detector, counts[detector], endpoint_for[sock]
+                            )
+
+                        # All other doc types (e.g. "datum_page", custom): silently ignore.
+
+                    except Exception as exc:
                         self.error.emit(f"{detector}: rejected ZMQ message: {exc}")
         except Exception as exc:
             self.error.emit(f"ZMQ listener stopped: {exc}")
@@ -75,4 +170,3 @@ class ZmqReceiver(QtCore.QObject):
     @Slot()
     def stop(self) -> None:
         self._running = False
-

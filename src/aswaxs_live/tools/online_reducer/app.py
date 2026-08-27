@@ -117,7 +117,7 @@ class MainWindow(QtWidgets.QMainWindow):
         run_form.addRow(temporary_note)
         form_root.addWidget(self.run_group)
 
-        zmq_group = QtWidgets.QGroupBox("ZMQ source (legacy SUB/image_path contract)")
+        zmq_group = QtWidgets.QGroupBox("ZMQ source (Bluesky RunEngine SUB)")
         zmq_form = QtWidgets.QFormLayout(zmq_group)
         self.saxs_endpoint = QtWidgets.QLineEdit()
         self.waxs_endpoint = QtWidgets.QLineEdit()

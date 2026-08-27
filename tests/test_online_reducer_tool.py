@@ -13,19 +13,20 @@ from aswaxs_live.tools.online_reducer.checkpoints import (
 )
 from aswaxs_live.tools.online_reducer.identity import resolve_experiment_identity
 from aswaxs_live.tools.online_reducer.session import OnlineCurveStore
-from aswaxs_live.tools.online_reducer.zmq_receiver import parse_image_message
+from aswaxs_live.tools.online_reducer.zmq_receiver import parse_zmq_message
 
 
 def test_online_reducer_uses_beamline_image_path_contract() -> None:
-    path, payload = parse_image_message(b'{"image_path":"Y:\\\\run\\\\Pil300K\\\\frame_001.h5"}')
-
-    assert path.name == "frame_001.h5"
-    assert payload["image_path"].endswith("frame_001.h5")
+    result = parse_zmq_message(b'{"image_path":"Y:\\\\run\\\\Pil300K\\\\frame_001.h5"}')
+    assert result is not None
+    doc_type, doc_body = result
+    assert doc_type == "image_path"
+    assert Path(doc_body["image_path"]).name == "frame_001.h5"
 
 
 def test_online_reducer_rejects_missing_image_path() -> None:
     try:
-        parse_image_message('{"other": 1}')
+        parse_zmq_message('{"other": 1}')
     except ValueError as exc:
         assert "image_path" in str(exc)
     else:

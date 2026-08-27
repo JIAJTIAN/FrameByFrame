@@ -1,4 +1,4 @@
-"""Deterministic unit tests for ZmqReceiver and parse_image_message.
+"""Deterministic unit tests for ZmqReceiver and parse_zmq_message.
 
 All tests run without a real ZMQ server by either testing the parser directly
 or driving a live ZMQ PUB/SUB pair bound to localhost (127.0.0.1) on a random
@@ -14,46 +14,134 @@ from pathlib import Path
 import pytest
 import zmq
 
-from aswaxs_live.tools.online_reducer.zmq_receiver import ZmqReceiver, parse_image_message
+from aswaxs_live.tools.online_reducer.zmq_receiver import (
+    ZmqReceiver,
+    _resource_hdf5_path,
+    parse_zmq_message,
+)
 
 
 # ---------------------------------------------------------------------------
-# parse_image_message — pure parser tests (no network, no Qt)
+# parse_zmq_message — pure parser tests (no network, no Qt)
 # ---------------------------------------------------------------------------
 
 
-def test_parse_valid_json_bytes_returns_path_and_payload() -> None:
-    path, payload = parse_image_message(b'{"image_path": "/data/Pil300K/frame_001.h5"}')
-
-    assert path == Path("/data/Pil300K/frame_001.h5")
-    assert payload["image_path"] == "/data/Pil300K/frame_001.h5"
-
-
-def test_parse_valid_json_string_works() -> None:
-    path, payload = parse_image_message('{"image_path": "/run/Eig1M/frame.h5", "uid": "abc"}')
-
-    assert path.name == "frame.h5"
-    assert payload["uid"] == "abc"
+def test_parse_legacy_json_bytes_returns_image_path_doc() -> None:
+    result = parse_zmq_message(b'{"image_path": "/data/Pil300K/frame_001.h5"}')
+    assert result is not None
+    doc_type, doc_body = result
+    assert doc_type == "image_path"
+    assert doc_body["image_path"] == "/data/Pil300K/frame_001.h5"
 
 
-def test_parse_missing_image_path_raises_value_error() -> None:
+def test_parse_legacy_json_string_works() -> None:
+    result = parse_zmq_message('{"image_path": "/run/Eig1M/frame.h5", "uid": "abc"}')
+    assert result is not None
+    doc_type, doc_body = result
+    assert doc_type == "image_path"
+    assert Path(doc_body["image_path"]).name == "frame.h5"
+    assert doc_body["uid"] == "abc"
+
+
+def test_parse_legacy_missing_image_path_raises() -> None:
     with pytest.raises(ValueError, match="image_path"):
-        parse_image_message(b'{"other_key": "value"}')
+        parse_zmq_message(b'{"other_key": "value"}')
 
 
-def test_parse_empty_image_path_raises_value_error() -> None:
+def test_parse_legacy_empty_image_path_raises() -> None:
     with pytest.raises(ValueError, match="image_path"):
-        parse_image_message(b'{"image_path": "   "}')
-
-
-def test_parse_non_dict_payload_raises_value_error() -> None:
-    with pytest.raises(ValueError, match="JSON object"):
-        parse_image_message(b'["not", "a", "dict"]')
+        parse_zmq_message(b'{"image_path": "   "}')
 
 
 def test_parse_malformed_json_raises_exception() -> None:
     with pytest.raises(Exception):
-        parse_image_message(b"not-json-at-all")
+        parse_zmq_message(b"not-json-at-all")
+
+
+def test_parse_unexpected_type_raises_value_error() -> None:
+    with pytest.raises(ValueError):
+        parse_zmq_message(b'"just-a-string"')
+
+
+# ---------------------------------------------------------------------------
+# Bluesky RunEngine document format
+# ---------------------------------------------------------------------------
+
+
+def test_parse_bluesky_start_returns_start_doc() -> None:
+    msg = json.dumps(["start", {"scan_id": 5, "plan_name": "count"}]).encode()
+    result = parse_zmq_message(msg)
+    assert result is not None
+    doc_type, doc_body = result
+    assert doc_type == "start"
+    assert doc_body["scan_id"] == 5
+
+
+def test_parse_bluesky_stop_returns_stop_doc() -> None:
+    msg = json.dumps(["stop", {"exit_status": "success", "num_events": {}}]).encode()
+    result = parse_zmq_message(msg)
+    assert result is not None
+    doc_type, _ = result
+    assert doc_type == "stop"
+
+
+def test_parse_bluesky_event_returns_none() -> None:
+    msg = json.dumps(["event", {"seq_num": 1, "data": {}}]).encode()
+    assert parse_zmq_message(msg) is None
+
+
+def test_parse_bluesky_descriptor_returns_none() -> None:
+    msg = json.dumps(["descriptor", {"uid": "abc"}]).encode()
+    assert parse_zmq_message(msg) is None
+
+
+def test_parse_bluesky_datum_returns_none() -> None:
+    msg = json.dumps(["datum", {"resource": "r", "datum_id": "r/0"}]).encode()
+    assert parse_zmq_message(msg) is None
+
+
+def test_parse_bluesky_resource_returns_resource_doc() -> None:
+    body = {"spec": "AD_HDF5", "root": "/data", "resource_path": "scan5.h5"}
+    msg = json.dumps(["resource", body]).encode()
+    result = parse_zmq_message(msg)
+    assert result is not None
+    doc_type, doc_body = result
+    assert doc_type == "resource"
+    assert doc_body["spec"] == "AD_HDF5"
+
+
+def test_parse_bluesky_bad_inner_types_raises() -> None:
+    msg = json.dumps(["start", "not-a-dict"]).encode()
+    with pytest.raises(ValueError):
+        parse_zmq_message(msg)
+
+
+# ---------------------------------------------------------------------------
+# _resource_hdf5_path helper
+# ---------------------------------------------------------------------------
+
+
+def test_resource_hdf5_path_posix() -> None:
+    doc = {"spec": "AD_HDF5", "root": "/data/2024", "resource_path": "scan5/frame.h5"}
+    path = _resource_hdf5_path(doc)
+    assert path == Path("/data/2024/scan5/frame.h5")
+
+
+def test_resource_hdf5_path_absolute() -> None:
+    doc = {"spec": "AD_HDF5", "root": "/data", "resource_path": "/abs/path/frame.h5",
+           "path_semantics": "absolute"}
+    path = _resource_hdf5_path(doc)
+    assert path == Path("/abs/path/frame.h5")
+
+
+def test_resource_hdf5_path_non_hdf5_returns_none() -> None:
+    doc = {"spec": "TIFF", "root": "/data", "resource_path": "frame.tiff"}
+    assert _resource_hdf5_path(doc) is None
+
+
+def test_resource_hdf5_path_missing_resource_path_returns_none() -> None:
+    doc = {"spec": "AD_HDF5", "root": "/data"}
+    assert _resource_hdf5_path(doc) is None
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +200,7 @@ def test_zmq_receiver_delivers_valid_image_path_message() -> None:
     ctx = zmq.Context.instance()
     pub, port = _bind_pub_socket(ctx)
     endpoint = f"tcp://127.0.0.1:{port}"
-    time.sleep(0.15)  # let SUB connect before first PUB message
+    time.sleep(0.15)
 
     def _publish():
         time.sleep(0.25)
@@ -130,6 +218,54 @@ def test_zmq_receiver_delivers_valid_image_path_message() -> None:
     assert len(stats) == 1
     assert stats[0][1] == 1  # count
     assert stats[0][2] == endpoint
+
+
+def test_zmq_receiver_delivers_bluesky_resource_message() -> None:
+    ctx = zmq.Context.instance()
+    pub, port = _bind_pub_socket(ctx)
+    endpoint = f"tcp://127.0.0.1:{port}"
+    time.sleep(0.15)
+
+    def _publish():
+        time.sleep(0.25)
+        doc = ["resource", {
+            "spec": "AD_HDF5",
+            "root": "/data/2024",
+            "resource_path": "Pil300K_scan5.h5",
+            "path_semantics": "posix",
+        }]
+        pub.send_multipart([json.dumps(doc).encode()])
+
+    threading.Thread(target=_publish, daemon=True).start()
+    received, errors, stats = _run_receiver_collecting(endpoint, timeout=3.0, max_messages=1)
+    pub.close(0)
+
+    assert len(received) == 1, f"expected 1 message, got {len(received)}; errors={errors}"
+    det, path, _ = received[0]
+    assert det == "Pil300K"
+    assert "Pil300K_scan5.h5" in path
+
+
+def test_zmq_receiver_silently_skips_bluesky_event_docs() -> None:
+    ctx = zmq.Context.instance()
+    pub, port = _bind_pub_socket(ctx)
+    endpoint = f"tcp://127.0.0.1:{port}"
+    time.sleep(0.15)
+
+    def _publish():
+        for doc_type in ("start", "descriptor", "event", "datum", "stop"):
+            time.sleep(0.1)
+            pub.send_multipart([json.dumps([doc_type, {"uid": "x"}]).encode()])
+        # Then send one good message
+        time.sleep(0.1)
+        pub.send_multipart([json.dumps({"image_path": "/run/Pil300K/good.h5"}).encode()])
+
+    threading.Thread(target=_publish, daemon=True).start()
+    received, errors, _ = _run_receiver_collecting(endpoint, timeout=5.0, max_messages=1)
+    pub.close(0)
+
+    assert len(received) == 1
+    assert len(errors) == 0, f"unexpected errors: {errors}"
 
 
 def test_zmq_receiver_increments_count_across_messages() -> None:
@@ -169,10 +305,8 @@ def test_zmq_receiver_survives_malformed_message_and_continues() -> None:
     received, errors, stats = _run_receiver_collecting(endpoint, timeout=4.0, max_messages=1)
     pub.close(0)
 
-    # The bad message should produce an error, the good one should be received.
     assert len(received) == 1
-    assert any("rejected" in e or "image_path" in e or "JSON" in e for e in errors), \
-        f"expected a rejection error, got: {errors}"
+    assert any("rejected" in e for e in errors), f"expected a rejection error, got: {errors}"
 
 
 def test_zmq_receiver_handles_missing_image_path_field() -> None:
@@ -199,7 +333,6 @@ def test_zmq_receiver_stops_cleanly_with_no_messages() -> None:
     endpoint = f"tcp://127.0.0.1:{port}"
     time.sleep(0.1)
 
-    # Start receiver and stop it after 0.3 s without sending anything.
     received, errors, _ = _run_receiver_collecting(endpoint, timeout=0.3, max_messages=999)
     pub.close(0)
 
@@ -208,7 +341,6 @@ def test_zmq_receiver_stops_cleanly_with_no_messages() -> None:
 
 
 def test_zmq_receiver_uses_last_frame_of_multipart_message() -> None:
-    """The receiver should parse the last part of a multipart message."""
     ctx = zmq.Context.instance()
     pub, port = _bind_pub_socket(ctx)
     endpoint = f"tcp://127.0.0.1:{port}"
