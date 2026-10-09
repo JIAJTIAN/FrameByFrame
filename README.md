@@ -15,10 +15,10 @@ pip install -e .
 Then launch the application with:
 
 ```bash
-framebyframe-aswaxs
+FrameByFrame
 ```
 
-All wizard settings are persisted automatically between sessions.
+Wizard settings are persisted automatically between sessions.
 
 ---
 

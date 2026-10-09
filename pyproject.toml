@@ -23,10 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-framebyframe-aswaxs = "aswaxs_live.app.launcher:main"
-framebyframe = "aswaxs_live.app.launcher:main"
-aswaxs = "aswaxs_live.app.launcher:main"
-framebyframe-online = "aswaxs_live.tools.online_reducer:main"
+FrameByFrame = "aswaxs_live.app.launcher:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
