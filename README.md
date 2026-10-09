@@ -1,6 +1,6 @@
 # FrameByFrame
 
-**FrameByFrame** is a GUI-driven data reduction platform for SAXS, WAXS, and ASAXS experiments at ChemMatCARS (Sector 15, Advanced Photon Source). It turns raw synchrotron detector frames into analysis-ready I(q) curves through a guided five-step wizard, then links directly to XAnoS for anomalous scattering decomposition and XModFit for model fitting.
+**FrameByFrame** is a GUI-driven data reduction platform for synchrotron SAXS, WAXS, and ASAXS experiments. It turns raw detector frames into analysis-ready I(q) curves through a guided five-step wizard, then links directly to XAnoS for anomalous scattering decomposition and XModFit for model fitting.
 
 ---
 
@@ -61,34 +61,13 @@ Click **New Task** on the dashboard to open the task builder. Navigate with **Ba
 
 ### Step 1 — Select Raw Data
 
-```
-[ Browse Folder ]  →  auto-discovers Pil300K/ and Eig1M/ subfolders
-                       and counts available .h5 frame files
+Browse to or paste an experiment folder path. The app scans it automatically and reports how many `.h5` frame files are present per detector. Individual HDF5 files can also be selected manually when the folder convention does not apply.
 
-Detector Mode:   ◉ Pil300K only (SAXS)
-                 ○ Eig1M only (WAXS)
-                 ○ Pil300K + Eig1M (simultaneous)
-```
-
-- Paste or browse to an experiment folder; the app scans it asynchronously and reports how many `.h5` files are present per detector.
-- **Detector Mode** controls which detector pipelines run. Choose *Both* for simultaneous SAXS/WAXS acquisition.
-- Individual HDF5 files can also be selected manually when the folder convention does not apply.
+**Detector Mode** controls which detector pipelines run: Pil300K only (SAXS), Eig1M only (WAXS), or both simultaneously.
 
 ---
 
 ### Step 2 — Choose Reduction Mode
-
-```
-┌───────────────────────────────┐  ┌───────────────────────────────┐
-│  ASAXS / XAnoS                │  │  SAXS Only                    │
-│                               │  │                               │
-│  [illustration: I(q) curves   │  │  [illustration: single I(q)   │
-│   shifting across energies]   │  │   curve on log-log axes]      │
-│                               │  │                               │
-│  Multi-energy near resonance  │  │  Single-energy azimuthal      │
-│  → XAnoS decomposition        │  │  integration                  │
-└───────────────────────────────┘  └───────────────────────────────┘
-```
 
 Select the card that matches your experiment:
 
@@ -103,89 +82,39 @@ A **Task Name** field at the top of this step names the queue entry.
 
 ### Step 3 — Sequence & Output
 
-```
-Acquisition geometry
-  Energies  [ 15 ▲▼ ]     Groups  [ 5 ▲▼ ]     Frames  [ 100 ▲▼ ]
+Set the acquisition geometry using the **Energies**, **Groups**, and **Frames** spinboxes. A live summary below them recomputes the total expected frame count as you type.
 
-  → Expected input: 7,500 frame files per detector
+**Monitor normalization PV** — choose the beamline intensity monitor channel for flux normalization. Click *Scan PVs from HDF5* to read available PV keys directly from a sample file.
 
-Monitor normalization PV
-  Pil300K monitor key  [ SPDS ▼ ]   [ Scan PVs from HDF5 ]
-  Eig1M monitor key    [ WPDS ▼ ]   [ Scan PVs from HDF5 ]
-
-Output folder  [ auto-derived from experiment folder ]  [ Override ]
-```
-
-- **Energies / Groups / Frames** spinboxes define the full acquisition structure. The live summary line below them recomputes the total expected frame count as you type.
-- **Monitor normalization PV** — choose the beamline intensity monitor channel for flux normalization. Clicking *Scan PVs from HDF5* reads available PV keys directly from a sample file.
-- **Output folder** is derived automatically from the raw data location. Override it only when saving results elsewhere.
+**Output folder** is derived automatically from the raw data location. Override it only when saving results elsewhere.
 
 ---
 
 ### Step 4 — Detector Calibration
 
-```
-Pil300K (SAXS)                      Eig1M (WAXS)
-  PONI file  [ path… ] [Browse]        PONI file  [ path… ] [Browse]
-  Mask file  [ path… ] [Browse]        Mask file  [ path… ] [Browse]
+Set a **PONI file** and **Mask file** for each active detector. The PONI file encodes beam center, sample-detector distance, and detector tilt; the mask excludes dead pixels, beamstop shadow, and module gaps.
 
-Common settings
-  Sample thickness   [ 1.5  mm ]
-  GC thickness       [ 1.0  mm ]
-  CPU cores          [ 8       ]
-```
-
-- **PONI file** — pyFAI geometry file encoding beam center, sample-detector distance, and detector tilt. Required for accurate azimuthal integration.
-- **Mask file** — pixel mask that excludes dead pixels, beamstop shadow, and module gaps.
-- A separate PONI and mask are set for each active detector.
-- **Common settings** apply to both detectors: sample and glassy-carbon capillary thickness for transmission correction and absolute calibration, plus the CPU core budget for parallel reduction.
+**Common settings** — sample and glassy-carbon capillary thickness (used for transmission correction and absolute calibration), and the CPU core budget for parallel reduction.
 
 ---
 
 ### Step 5 — Samples & Finish
 
-```
-Group role assignments
-  GC group     [ 1 ▲▼ ]   Air group   [ 2 ▲▼ ]   Empty group [ 3 ▲▼ ]
+Assign sequence group numbers to their physical roles (GC, Air, Empty). Then define **sample / solvent pairs**: each row names one output file and maps a sample group to its solvent background group.
 
-Sample / solvent pairs
-  ┌─────────────────────┬──────────────┬───────────────┐
-  │ Output name         │ Sample group │ Solvent group │
-  ├─────────────────────┼──────────────┼───────────────┤
-  │ AuNP_10mM_citrate   │      5       │      4        │
-  │ AuNP_1mM_citrate    │      6       │      4        │
-  └─────────────────────┴──────────────┴───────────────┘
-  [ + Add Row ]  [ Visual Rack Builder ]
+**Visual Rack Builder** — opens a graphical capillary rack layout where you drag and assign roles to physical positions. Assignments feed back into the pair table automatically.
 
-[ Add to Queue ]
-```
-
-- **Group role assignments** map sequence group numbers to their physical meaning. The GC group provides the absolute calibration factor; air and empty groups are used for background correction.
-- **Sample / solvent pairs** define which groups constitute a measurement and its background. Each row produces one reduced I(q) output named after the *Output name* column.
-- **Visual Rack Builder** — opens a graphical capillary rack layout where you drag and assign roles (Sample, Solvent, GC, Air, Empty, Skip) to physical positions. Assignments feed back into the pair table automatically.
+Click **Add to Queue** to submit the task.
 
 ---
 
 ## Task Queue
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ Task name        │ Status  │ Detectors │ Sequence        │ Pairs     │
-├──────────────────────────────────────────────────────────────────────┤
-│ AuNP_ASAXS_run1  │ Running │ Pil + Eig │ 15E × 6G × 100F │ 2 pairs   │
-│ AuNP_SAXS_check  │ Queued  │ Pil only  │  1E × 4G ×  50F │ 1 pair    │
-└──────────────────────────────────────────────────────────────────────┘
+Tasks appear as rows showing name, status, detector configuration, sequence geometry, and number of pairs. They can be added, edited, reordered, and removed while the queue is running.
 
-  Pil300K: 8,340 / 9,000 frames      Eig1M: 8,210 / 9,000 frames
-  [==========================>   ]  ETA 4 min 12 sec
+Progress shows per-detector frame counts (Pil300K and Eig1M independently) and a smoothed ETA. Reduction runs multicore — one process pool job per (energy, group) pair, so 15 energies × 6 groups schedules 90 parallel jobs per detector.
 
-[ New Task ]  [ Edit ]  [ Move Up ]  [ Move Down ]  [ Remove ]  [ Run Queue ]
-```
-
-- Tasks can be added, edited, reordered, and removed while the queue is running.
-- Progress shows per-detector frame counts (Pil300K and Eig1M independently) and a smoothed ETA.
-- Reduction runs multicore: one process pool job per `(energy, group)` pair, so 15 energies × 6 groups schedules 90 parallel jobs per detector.
-- When a task completes, a **Reduction Complete** dialog offers to open the result directly in **XAnoS Components** (ASAXS tasks only).
+When a task completes, a **Reduction Complete** dialog offers to open the result directly in **XAnoS Components** (ASAXS tasks only).
 
 ---
 
@@ -205,34 +134,13 @@ The **Tools** menu at the top of the dashboard opens additional utilities withou
 
 ### HDF5 I(q) Viewer
 
-A full-featured curve viewer for analysis HDF5 files.
+A full-featured curve viewer for analysis HDF5 files. Tabs cover single frames, group averages, final curves, and Frame Stability QC. Single-frame view modes include latest frame, a specific frame, the last N frames, all frames in a group, average overlaid with individual frames, and a heatmap of frame index versus q.
 
-```
-Tabs:  Single frames · Group averages · Final curves · Frame Stability QC
-
-Single frames view modes:
-  latest · single frame · last N · all in group · average + frames · heatmap
-
-Navigation: energy selector → group selector → frame slider
-            Previous / Next arrows,  Alt ← / Alt →
-```
-
-- Browse any analysis HDF5 — during or after reduction.
-- **Single frames**: inspect individual detector images as I(q), overlay the last N frames, or view a heatmap of frame index versus q with intensity as color.
-- **Group averages and final curves**: click or Ctrl-click to overlay curves from different energies or groups.
+Navigate between energies and groups using the selectors and arrow buttons, or use Alt ← / Alt →.
 
 ### Frame Stability QC Tab
 
-Automatically computed before each group average. Loaded from the analysis HDF5 without re-opening raw data.
-
-```
-Report includes:
-  • Frame overlays and I_i(q) / I_1(q) ratio heatmap
-  • Invariant-like and low-q intensity ratios
-  • Reduced chi-square and CorMap longest-run probability
-  • Optional Guinier Rg / I(0) and peak trends
-  • Advisory label: Good · Acceptable · Bad
-```
+Automatically computed before each group average and loaded from the analysis HDF5 without re-opening raw data. The report includes frame overlays, I_i(q)/I_1(q) ratio heatmap, invariant-like and low-q intensity ratios, reduced chi-square, CorMap longest-run probability, optional Guinier Rg / I(0) and peak trends, and an advisory label (Good / Acceptable / Bad).
 
 ### HDF5 Structure Viewer
 
@@ -244,15 +152,7 @@ Launches the pyFAI calibration workflow directly from the GUI. Load a calibrant 
 
 ### Online 1-D Reducer
 
-A live reduction window that receives detector frames over ZMQ as the beamline acquires data, performs read-only azimuthal integration immediately, and appends results to the analysis HDF5 in real time.
-
-```
-Live panel:
-  ZMQ connection status
-  Frame counter
-  Latest I(q) plot (auto-updated)
-  SAXS / WAXS / stitched tabs
-```
+A live reduction window that receives detector frames over ZMQ as the beamline acquires data, performs azimuthal integration immediately on each incoming frame, and displays I(q) curves in real time. SAXS, WAXS, and stitched views are available as separate tabs. On plan stop, reduced curves are exported automatically to the canonical Extracted folder.
 
 ---
 
@@ -260,27 +160,11 @@ Live panel:
 
 ### XAnoS Components
 
-For completed ASAXS tasks, FrameByFrame launches XAnoS Components in a separate process and forwards the exported `.dat` files automatically.
-
-```
-FrameByFrame  ──[.dat files]──▶  XAnoS Components
-                                    anomalous decomposition
-                                    element-specific I(q)
-                                    [ Save ASAXS results ]
-```
-
-The handoff is triggered either from the **Reduction Complete** dialog at the end of a task or from the task context menu at any time after completion.
+For completed ASAXS tasks, FrameByFrame launches XAnoS Components in a separate process and forwards the exported `.dat` files automatically. The handoff is triggered from the **Reduction Complete** dialog at the end of a task, or from the task context menu at any time after completion. XAnoS performs anomalous decomposition and produces element-specific I(q) components.
 
 ### XModFit
 
-From within XAnoS Components, a **Send to XModFit** button forwards the decomposed curves to XModFit for model fitting in a third isolated process.
-
-```
-XAnoS Components  ──[curves]──▶  XModFit
-                                    model library
-                                    parameter optimization
-                                    publication plots
-```
+From within XAnoS Components, saving the decomposed results forwards them to XModFit in a third isolated process for model fitting, parameter optimization, and publication-quality plots.
 
 ---
 
@@ -289,5 +173,5 @@ XAnoS Components  ──[curves]──▶  XModFit
 | File | Contents |
 |------|----------|
 | `<sample>_analysis.h5` | Reduced I(q) curves, propagated uncertainty, frame-stability QC, reduction timing, full provenance |
-| `XAnos format/<sample>_<energy>.dat` | XAnoS-compatible text export for ASAXS decomposition |
-| `aswaxs_v6_builder_settings.json` | Wizard state — reloaded automatically on next launch |
+| `<sample>_<energy>.dat` | XAnoS-compatible text export for ASAXS decomposition |
+| `settings.json` | Wizard state — reloaded automatically on next launch |
