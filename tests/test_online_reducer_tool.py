@@ -5,7 +5,7 @@ import h5py
 from pyFAI.integrator.azimuthal import AzimuthalIntegrator
 
 from aswaxs_live.tools.online_reducer.config import OnlineConfig
-from aswaxs_live.tools.online_reducer.engine import ensure_v5_importable
+from aswaxs_live.tools.online_reducer.engine import ensure_v6_importable
 from aswaxs_live.tools.online_reducer.checkpoints import (
     read_checkpoint_uid,
     write_experiment_metadata,
@@ -13,19 +13,20 @@ from aswaxs_live.tools.online_reducer.checkpoints import (
 )
 from aswaxs_live.tools.online_reducer.identity import resolve_experiment_identity
 from aswaxs_live.tools.online_reducer.session import OnlineCurveStore
-from aswaxs_live.tools.online_reducer.zmq_receiver import parse_image_message
+from aswaxs_live.tools.online_reducer.zmq_receiver import parse_zmq_message
 
 
 def test_online_reducer_uses_beamline_image_path_contract() -> None:
-    path, payload = parse_image_message(b'{"image_path":"Y:\\\\run\\\\Pil300K\\\\frame_001.h5"}')
-
-    assert path.name == "frame_001.h5"
-    assert payload["image_path"].endswith("frame_001.h5")
+    result = parse_zmq_message(b'{"image_path":"Y:\\\\run\\\\Pil300K\\\\frame_001.h5"}')
+    assert result is not None
+    doc_type, doc_body = result
+    assert doc_type == "image_path"
+    assert Path(doc_body["image_path"]).name == "frame_001.h5"
 
 
 def test_online_reducer_rejects_missing_image_path() -> None:
     try:
-        parse_image_message('{"other": 1}')
+        parse_zmq_message('{"other": 1}')
     except ValueError as exc:
         assert "image_path" in str(exc)
     else:
@@ -44,8 +45,8 @@ def test_online_reducer_config_round_trip(tmp_path: Path) -> None:
     assert not hasattr(actual, "output_dir")
 
 
-def test_online_reducer_uses_embedded_v5_engine() -> None:
-    src = ensure_v5_importable()
+def test_online_reducer_uses_embedded_v6_engine() -> None:
+    src = ensure_v6_importable()
 
     assert (src / "aswaxs_live" / "reduction" / "live.py").is_file()
     from aswaxs_live.reduction.live import LivePipelineState, SequenceAssigner
@@ -61,7 +62,7 @@ def test_online_reducer_gui_does_not_embed_legacy_viewer() -> None:
 
     build_ui_source = inspect.getsource(MainWindow._build_ui)
 
-    assert "Open V5 curve viewer" not in build_ui_source
+    assert "Open V6 curve viewer" not in build_ui_source
     assert "viewer_button" not in build_ui_source
 
 
@@ -103,7 +104,7 @@ def test_online_curve_store_rejects_mixed_qc_series() -> None:
     try:
         store.frame_series([0, 1])
     except ValueError as exc:
-        assert "same experiment, detector" in str(exc)
+        assert "same detector" in str(exc)
     else:
         raise AssertionError("mixed detector curves were accepted for frame QC")
 
@@ -226,6 +227,51 @@ def test_checkpoint_registry_records_experiment_and_stage_dependencies(tmp_path:
         assert integration_uid in dependencies
 
 
+def test_engine_finalize_plan_exports_to_extracted(tmp_path: Path) -> None:
+    """finalize_plan() copies the analysis HDF5 to the canonical Extracted folder."""
+    from aswaxs_live.tools.online_reducer.engine import OnlineReductionEngine
+
+    poni = tmp_path / "test.poni"
+    mask = tmp_path / "mask.npy"
+    AzimuthalIntegrator(
+        dist=0.2, poni1=0.0016, poni2=0.0016, pixel1=0.0001, pixel2=0.0001,
+    ).save(str(poni))
+    np.save(mask, np.zeros((32, 32), dtype=np.uint8))
+    config = OnlineConfig(
+        pil300k_poni=str(poni), pil300k_mask=str(mask),
+        eig1m_poni=str(poni), eig1m_mask=str(mask),
+        num_frames=1, npt=50, settle_seconds=0,
+    )
+    session = tmp_path / "session"
+    engine = OnlineReductionEngine(config, session)
+    errors: list[str] = []
+    exported: list[list] = []
+    engine.error.connect(errors.append)
+    engine.plan_exported.connect(lambda _det, paths: exported.append(paths))
+    engine.initialize()
+
+    raw = tmp_path / "Experiment" / "Pil300K" / "frame_001.h5"
+    raw.parent.mkdir(parents=True)
+    with h5py.File(raw, "w") as fh:
+        fh.create_dataset("entry/data/data", data=np.ones((32, 32), dtype=np.float32) * 5)
+        nd = fh.create_group("entry/instrument/NDAttributes")
+        nd.create_dataset("Mono_Energy", data=12.0)
+        nd.create_dataset("SPDS", data=100.0)
+
+    engine.process_file("Pil300K", str(raw), {"image_path": str(raw), "experiment_title": "Experiment", "experiment_uid": "uid-e"})
+    engine.finalize_plan("Pil300K", "42")
+    engine.shutdown()
+
+    assert not errors
+    assert exported, "plan_exported signal not emitted"
+    extracted_dir = tmp_path / "Extracted" / "Experiment" / "Pil300K"
+    exported_files = list(extracted_dir.glob("*_azim_avg.h5"))
+    assert exported_files, f"no azim_avg HDF5 in {extracted_dir}"
+    assert "S42" in exported_files[0].name
+    with h5py.File(exported_files[0], "r") as fh:
+        assert "/entry/realtime/process_01_reduction/frames" in fh
+
+
 def test_online_engine_routes_experiments_to_separate_h5_checkpoints(tmp_path: Path) -> None:
     from aswaxs_live.tools.online_reducer.engine import OnlineReductionEngine
 
@@ -287,7 +333,7 @@ def test_online_engine_routes_experiments_to_separate_h5_checkpoints(tmp_path: P
     )
 
     runtime_paths = [runtime.state.analysis_path for runtime in engine._runtimes.values()]
-    combined = next((tmp_path / "session").glob("*/Run_A_analysis.h5"))
+    combined = next((tmp_path / "session").glob("**/Run_A_analysis.h5"))
     engine.shutdown()
     try:
         assert not errors

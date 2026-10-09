@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-from PyQt5 import QtCore, QtWidgets
 
 from aswaxs_live.tools.iq_viewer.qc_widget import FrameStabilityWidget
 from aswaxs_live.tools.iq_viewer.viewer import IQ_X_LABEL, IQ_Y_LABEL, PUBLICATION_COLORS
@@ -30,14 +30,14 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
         self.browser_button.setText("Curve Browser")
         self.browser_button.setCheckable(True)
         self.browser_button.setChecked(True)
-        self.browser_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.browser_button.setArrowType(QtCore.Qt.DownArrow)
+        self.browser_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.browser_button.setArrowType(QtCore.Qt.ArrowType.DownArrow)
         self.browser_button.toggled.connect(self._set_browser_visible)
         view_bar.addWidget(self.browser_button)
         view_bar.addStretch(1)
         root.addLayout(view_bar)
 
-        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         root.addWidget(self.splitter, 1)
 
         self.list_panel = QtWidgets.QWidget()
@@ -47,7 +47,7 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
         list_layout.setContentsMargins(0, 0, 6, 0)
         list_layout.addWidget(QtWidgets.QLabel("Finished 1-D frame curves"))
         self.curve_list = QtWidgets.QListWidget()
-        self.curve_list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.curve_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.curve_list.itemDoubleClicked.connect(lambda _item: self.plot_selected())
         list_layout.addWidget(self.curve_list, 1)
         buttons = QtWidgets.QVBoxLayout()
@@ -68,12 +68,12 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setMinimumWidth(0)
-        self.tabs.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Expanding)
+        self.tabs.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Expanding)
         self.tabs.addTab(self._curve_page(), "I-q Curves")
         self.tabs.addTab(self._image_page(), "Detector Images")
         self.qc_widget = FrameStabilityWidget(self, show_file_controls=False, compact=True)
         self.qc_widget.setMinimumWidth(0)
-        self.qc_widget.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Expanding)
+        self.qc_widget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Expanding)
         self.tabs.addTab(self.qc_widget, "Frame Stability QC")
         self.splitter.addWidget(self.tabs)
         self.splitter.setSizes([275, 1000])
@@ -82,7 +82,7 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
 
     def _set_browser_visible(self, visible: bool) -> None:
         self.list_panel.setVisible(visible)
-        self.browser_button.setArrowType(QtCore.Qt.DownArrow if visible else QtCore.Qt.RightArrow)
+        self.browser_button.setArrowType(QtCore.Qt.ArrowType.DownArrow if visible else QtCore.Qt.ArrowType.RightArrow)
         if visible:
             self.splitter.setSizes([275, max(700, self.splitter.width() - 275)])
 
@@ -126,19 +126,27 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
         layout.addWidget(canvas, 1)
         return page
 
-    @QtCore.pyqtSlot(object)
+    @Slot(str)
+    def clear_detector(self, detector: str) -> None:
+        """Clear the curve list and store when a new plan starts for *detector*."""
+        self.store.clear()
+        self.curve_list.clear()
+        self.selection_status.setText(f"New plan started ({detector}) — waiting for reduced curves.")
+
+    @Slot(object)
     def add_curve(self, payload: object) -> None:
         record = self.store.add_payload(dict(payload))
         item = QtWidgets.QListWidgetItem(record.label)
-        item.setData(QtCore.Qt.UserRole, len(self.store.records) - 1)
+        item.setData(QtCore.Qt.ItemDataRole.UserRole, len(self.store.records) - 1)
         item.setToolTip(record.source_path)
         self.curve_list.addItem(item)
         self.selection_status.setText(f"{len(self.store.records)} reduced frame curve(s) available in this session.")
-        if self.curve_list.count() == 1:
-            item.setSelected(True)
-            self.plot_selected()
+        self.curve_list.clearSelection()
+        item.setSelected(True)
+        self.curve_list.scrollToItem(item)
+        self.plot_selected(switch_tab=False)
 
-    @QtCore.pyqtSlot(str, object, object)
+    @Slot(str, object, object)
     def update_detector_image(self, detector: str, image: object, metadata: object) -> None:
         values = np.asarray(image, dtype=float)
         display = np.log1p(np.clip(values, 0.0, None))
@@ -163,9 +171,9 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
             canvas.draw_idle()
 
     def selected_indices(self) -> list[int]:
-        return sorted(int(item.data(QtCore.Qt.UserRole)) for item in self.curve_list.selectedItems())
+        return sorted(int(item.data(QtCore.Qt.ItemDataRole.UserRole)) for item in self.curve_list.selectedItems())
 
-    def plot_selected(self) -> None:
+    def plot_selected(self, *, switch_tab: bool = True) -> None:
         indices = self.selected_indices()
         if not indices:
             self.selection_status.setText("Select one or more completed curves.")
@@ -185,7 +193,8 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
             self.curve_axis.legend(fontsize=7, loc="best")
         self.curve_figure.tight_layout()
         self.curve_canvas.draw_idle()
-        self.tabs.setCurrentIndex(0)
+        if switch_tab:
+            self.tabs.setCurrentIndex(0)
         suffix = " (first 100 shown)" if len(indices) > 100 else ""
         self.selection_status.setText(f"Plotted {min(len(indices), 100)} selected curve(s){suffix}.")
 

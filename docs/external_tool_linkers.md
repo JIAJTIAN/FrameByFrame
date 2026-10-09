@@ -14,7 +14,7 @@ FrameByFrame-ASWAXS
   prepares data, launches tools, applies helper defaults
 
 external tool linker
-  resolves paths, starts original scripts, optionally preloads data
+  resolves paths, starts isolated processes, optionally preloads data
 
 original XAnoS / XModFit / Sample Position App
   remains source-compatible with upstream
@@ -24,14 +24,14 @@ original XAnoS / XModFit / Sample Position App
 
 - `aswaxs_live.tools.linkers.xanos`
   - finds `XAnoS_Components.py`;
-  - opens the original XAnoS Components Qt widget;
+  - opens the original XAnoS Components Qt widget in an isolated process;
   - optionally preloads FrameByFrame-ASWAXS XAnoS-format `.dat` files;
-  - applies only runtime visual defaults and selection helpers.
+  - preserves runtime defaults, selection helpers, and the XModFit save handoff.
 
 - `aswaxs_live.tools.linkers.xmodfit`
   - finds `xmodfit.py`;
-  - launches original XModFit with the current Python environment;
-  - reserves a future `data_files` argument for an explicit import contract.
+  - launches original XModFit in an isolated process;
+  - automatically imports supplied data files.
 
 - `aswaxs_live.tools.linkers.sample_position`
   - launches the separate sample-position planning app;
@@ -40,15 +40,25 @@ original XAnoS / XModFit / Sample Position App
 
 ## Environment Variables
 
-Set these only when the external tools are not in the expected sibling folders:
+In the shared Python 3.10 `pydm-env` environment, interpreter variables are
+not required: both linkers use the running FrameByFrame `sys.executable` and
+start a separate Qt5 process. Set script paths only when the external tools are
+not in the expected sibling folders:
 
 ```text
 FRAMEBYFRAME_XANOS_COMPONENTS=/path/to/XAnoS_Components.py
 FRAMEBYFRAME_XMODFIT_SCRIPT=/path/to/xmodfit.py
 FRAMEBYFRAME_SAMPLE_POSITION_APP=/path/to/sample-position/main.py
+FRAMEBYFRAME_XANOS_PYTHON=/path/to/xanos-environment/python
+FRAMEBYFRAME_XMODFIT_PYTHON=/path/to/xmodfit-environment/python
+FRAMEBYFRAME_QT5_PYTHON=/path/to/qt5-environment/python
 ```
 
 The older `ASWAXS_XANOS_COMPONENTS` variable is still accepted for compatibility.
+Interpreter overrides are optional. The per-tool Python variables take
+precedence over `FRAMEBYFRAME_QT5_PYTHON`, which is a shared fallback. The
+external widget is always hosted in another process. FrameByFrame never imports
+a Qt5 external widget into its PySide6 process.
 
 ## Future Contract
 

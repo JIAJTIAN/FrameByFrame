@@ -8,6 +8,11 @@ FrameByFrame-ASWAXS has four top-level ownership areas.
 Qt runtime configuration. It coordinates workflows but does not implement
 scientific reduction.
 
+`aswaxs_live.app.qt` is the sole first-party Qt binding boundary. It selects
+PySide6 before GUI-adjacent imports and rejects a process that already loaded
+PyQt5 or PyQt6. Qt5-only external applications are hosted by subprocess bridge
+modules under `tools.linkers`.
+
 ## Reduction
 
 `aswaxs_live.reduction` owns pyFAI integration, sequence mapping, frame
@@ -43,4 +48,3 @@ raw HDF5 (read-only) -> reduction/QC -> analysis HDF5 -> export/linkers
 
 Each feature has one authoritative module path. Obsolete aliases and wrapper-
 only packages are not retained.
-

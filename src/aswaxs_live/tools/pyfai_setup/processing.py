@@ -137,7 +137,7 @@ def launch_pyfai_integrate(
 def _pyfai_qt_env(force_software_gl: bool = False) -> dict[str, str]:
     """Return a Qt environment suitable for pyFAI tools on remote displays."""
     env = os.environ.copy()
-    env.setdefault("QT_API", "pyqt5")
+    env["QT_API"] = "pyqt5"
     suppress_glx_warning(env)
     if force_software_gl:
         env["QT_OPENGL"] = "software"

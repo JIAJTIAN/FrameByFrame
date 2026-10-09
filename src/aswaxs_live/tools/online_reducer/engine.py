@@ -4,12 +4,13 @@ import argparse
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 import sys
 from typing import TextIO
 
 import numpy as np
 import h5py
-from PyQt5 import QtCore
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 
 from aswaxs_live.reduction.analysis_h5 import file_sha256
 
@@ -18,12 +19,18 @@ from .config import OnlineConfig
 from .identity import ExperimentIdentity, resolve_experiment_identity
 
 
-DEFAULT_V5_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_V6_ROOT = Path(__file__).resolve().parents[4]
 ONLINE_MAX_MEASUREMENTS = 1_000_000
 
 
-def ensure_v5_importable(v5_root: Path = DEFAULT_V5_ROOT) -> Path:
-    src = v5_root.resolve() / "src"
+def _azim_avg_filename(title: str, detector: str, scan_id: str) -> str:
+    """Build the canonical Extracted filename for an online-reduced HDF5."""
+    parts = [p for p in (title, f"S{scan_id}" if scan_id else "", detector) if p]
+    return "_".join(parts) + "_azim_avg.h5"
+
+
+def ensure_v6_importable(v6_root: Path = DEFAULT_V6_ROOT) -> Path:
+    src = v6_root.resolve() / "src"
     engine_path = src / "aswaxs_live" / "reduction" / "live.py"
     if not engine_path.is_file():
         raise FileNotFoundError(f"FrameByFrame-ASWAXS source was not found at {src}")
@@ -36,6 +43,7 @@ def ensure_v5_importable(v5_root: Path = DEFAULT_V5_ROOT) -> Path:
 class DetectorRuntime:
     identity: ExperimentIdentity
     detector: str
+    detector_dir: Path
     assigner: object
     state: object
     event_log: TextIO
@@ -44,31 +52,34 @@ class DetectorRuntime:
 
 
 class OnlineReductionEngine(QtCore.QObject):
-    log = QtCore.pyqtSignal(str)
-    progress = QtCore.pyqtSignal(str, int, int, int, int)
-    curve_ready = QtCore.pyqtSignal(object)
-    image_ready = QtCore.pyqtSignal(str, object, object)
-    experiment_discovered = QtCore.pyqtSignal(object)
-    output_updated = QtCore.pyqtSignal(str)
-    error = QtCore.pyqtSignal(str)
-    ready = QtCore.pyqtSignal()
-    stopped = QtCore.pyqtSignal()
+    log = Signal(str)
+    progress = Signal(str, int, int, int, int)
+    curve_ready = Signal(object)
+    image_ready = Signal(str, object, object)
+    experiment_discovered = Signal(object)
+    output_updated = Signal(str)
+    plan_exported = Signal(str, list)  # detector, list[str] of canonical paths written
+    detector_reset = Signal(str)       # detector key — emitted when a new plan clears old frames
+    error = Signal(str)
+    ready = Signal()
+    stopped = Signal()
 
-    def __init__(self, config: OnlineConfig, session_dir: Path, v5_root: Path = DEFAULT_V5_ROOT) -> None:
+    def __init__(self, config: OnlineConfig, session_dir: Path, v6_root: Path = DEFAULT_V6_ROOT) -> None:
         super().__init__()
         self.config = config
         self.session_dir = Path(session_dir).expanduser().resolve()
-        self.v5_root = v5_root
+        self.v6_root = v6_root
         self._runtimes: dict[tuple[str, str], DetectorRuntime] = {}
         self._announced_experiments: set[str] = set()
+        self._current_scan_ids: dict[str, str] = {}
         self._active = False
         self._reducer = None
         self._core = None
 
-    @QtCore.pyqtSlot()
+    @Slot()
     def initialize(self) -> None:
         try:
-            ensure_v5_importable(self.v5_root)
+            ensure_v6_importable(self.v6_root)
             from aswaxs_live.reduction import live as reducer
 
             self._reducer = reducer
@@ -78,12 +89,14 @@ class OnlineReductionEngine(QtCore.QObject):
             self.log.emit("FrameByFrame online 1-D reduction engine is ready")
             self.ready.emit()
         except Exception as exc:
-            self.error.emit(f"Could not initialize V5 engine: {exc}")
+            self.error.emit(f"Could not initialize V6 engine: {exc}")
 
     def _make_runtime(self, identity: ExperimentIdentity, detector: str) -> DetectorRuntime:
         reducer = self._reducer
         experiment_dir = self.session_dir / identity.storage_name
-        detector_dir = experiment_dir / detector
+        scan_id = self._current_scan_ids.get(detector, "")
+        plan_subdir = f"S{scan_id}" if scan_id else "current"
+        detector_dir = experiment_dir / plan_subdir / detector
         detector_dir.mkdir(parents=True, exist_ok=True)
         args = self._runtime_args(detector, detector_dir, identity.safe_title)
         analysis_path = reducer.prepare_output_records_for_run(args, detector_dir)
@@ -113,7 +126,7 @@ class OnlineReductionEngine(QtCore.QObject):
         state.image_callback = lambda item, image, name=detector, experiment=identity: self._emit_image_preview(
             name, item, image, experiment
         )
-        # Restore V5's pending curves, completed averages, and sequence position.
+        # Restore V6's pending curves, completed averages, and sequence position.
         # Advancing the counter alone would lose unfinished group state.
         resume_items = reducer.compatible_resume_items_or_quarantine(analysis_path, self._core, args)
         seen: set[Path] = set()
@@ -135,7 +148,7 @@ class OnlineReductionEngine(QtCore.QObject):
             "expected_frames_per_group": int(self.config.num_frames),
             "sequence_mode": "open-ended measurements; energy read from raw HDF5 metadata",
         }
-        return DetectorRuntime(identity, detector, assigner, state, event_log, set(seen), checkpoint_parameters)
+        return DetectorRuntime(identity, detector, detector_dir, assigner, state, event_log, set(seen), checkpoint_parameters)
 
     def _runtime_args(self, detector: str, output_dir: Path, sample_name: str) -> argparse.Namespace:
         cfg = self.config
@@ -166,7 +179,7 @@ class OnlineReductionEngine(QtCore.QObject):
         args.analysis_write_interval_groups = 1
         return args
 
-    @QtCore.pyqtSlot(str, str, object)
+    @Slot(str, str, object)
     def process_file(self, detector: str, path_text: str, _payload: object = None) -> None:
         if not self._active:
             return
@@ -314,9 +327,11 @@ class OnlineReductionEngine(QtCore.QObject):
             return
         root = self.session_dir / identity.storage_name
         combined = root / f"{identity.safe_title}_analysis.h5"
+        pil_dir = self._runtimes[(identity.experiment_uid, "Pil300K")].detector_dir
+        eig_dir = self._runtimes[(identity.experiment_uid, "Eig1M")].detector_dir
         updated = update_live_stitched_averages(
-            root / "Pil300K",
-            root / "Eig1M",
+            pil_dir,
+            eig_dir,
             combined_h5_path=combined,
             sample_names=[identity.safe_title],
         )
@@ -352,7 +367,71 @@ class OnlineReductionEngine(QtCore.QObject):
         self.log.emit(f"{identity.title}: updated stitched 1-D detector averages -> {combined.name}")
         self.output_updated.emit(str(combined))
 
-    @QtCore.pyqtSlot()
+    @Slot(str, str)
+    def reset_detector(self, detector: str, scan_id: str = "") -> None:
+        """Drop all runtimes for *detector* and record the new scan_id.
+
+        Called when the Bluesky ZMQ stream emits a ``start`` document so that
+        each plan begins with a clean frame list in its own session subdirectory.
+        """
+        self._current_scan_ids[detector] = scan_id
+        stale = [key for key in self._runtimes if key[1] == detector]
+        for key in stale:
+            runtime = self._runtimes.pop(key)
+            try:
+                runtime.state.write_analysis_h5(force=True)
+            except Exception:
+                pass
+            runtime.event_log.close()
+        if stale:
+            self.log.emit(f"{detector}: new plan S{scan_id} — previous frame list cleared")
+        self.detector_reset.emit(detector)
+
+    @Slot(str, str)
+    def finalize_plan(self, detector: str, scan_id: str = "") -> None:
+        """Flush all open runtimes for *detector*, write final checkpoints, and
+        copy the analysis HDF5 files to each experiment's canonical Extracted folder.
+
+        Called automatically when the Bluesky ZMQ stream emits a ``stop`` document.
+        By the time this slot fires (via a queued Qt connection) all prior
+        ``process_file`` calls from the same stream will have completed.
+        """
+        written: list[str] = []
+        identities_to_stitch: dict[str, ExperimentIdentity] = {}
+        for (exp_uid, det), runtime in list(self._runtimes.items()):
+            if det != detector:
+                continue
+            try:
+                runtime.state.write_analysis_h5(force=True)
+                self._write_detector_checkpoints(runtime, final=True)
+                src = runtime.state.analysis_path
+                dst_dir = runtime.identity.canonical_output_root / detector
+                dst_dir.mkdir(parents=True, exist_ok=True)
+                dst_name = _azim_avg_filename(runtime.identity.safe_title, detector, scan_id)
+                dst = dst_dir / dst_name
+                shutil.copy2(src, dst)
+                written.append(str(dst))
+                self.log.emit(
+                    f"{detector}: plan complete — exported to {dst}"
+                )
+                identities_to_stitch[exp_uid] = runtime.identity
+            except Exception as exc:
+                self.error.emit(f"{detector}: auto-export failed: {exc}")
+
+        for identity in identities_to_stitch.values():
+            try:
+                # Update the in-session combined file for live display only.
+                # It is intentionally NOT exported to Extracted so the offline
+                # pipeline performs its own authoritative stitch after proper
+                # frame averaging.
+                self._update_stitching(identity, final=True)
+            except Exception as exc:
+                self.error.emit(f"{identity.title}: stitching update failed: {exc}")
+
+        if written:
+            self.plan_exported.emit(detector, written)
+
+    @Slot()
     def shutdown(self) -> None:
         self._active = False
         identities = {runtime.identity.experiment_uid: runtime.identity for runtime in self._runtimes.values()}

@@ -30,7 +30,7 @@ from aswaxs_live.reduction.stitching import (
 from aswaxs_live.reduction.xanos_export import export_analysis_h5_to_xanos_format
 
 
-DEFAULT_QUEUE_PATH = PROJECT_DIR / "aswaxs_v5_queue.json"
+DEFAULT_QUEUE_PATH = PROJECT_DIR / "aswaxs_v6_queue.json"
 REDUCED_FRAME_RE = re.compile(r"(?:\[(?P<label>[^\]]+)\]\s*)?Reduced frame\s+(?P<done>\d+)/(?P<total>\d+)")
 
 
@@ -84,7 +84,7 @@ def scan_detector_files(folder: Path, pattern: str = "*.h5") -> tuple[int, int]:
 
 
 def sort_h5_files(paths: list[str | Path]) -> list[Path]:
-    resolved = [Path(path).expanduser().resolve() for path in paths if str(path).strip()]
+    resolved = [Path(path).expanduser() for path in paths if str(path).strip()]
     return sorted(resolved, key=_data_file_sort_key)
 
 
@@ -120,14 +120,19 @@ def task_from_json(payload: dict[str, object]) -> TaskSpec:
 
 def save_queue(path: Path, tasks: list[TaskSpec]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([task_to_json(task) for task in tasks], indent=2), encoding="utf-8")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps([task_to_json(task) for task in tasks], indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 def load_queue(path: Path) -> list[TaskSpec]:
     if not path.exists():
         return []
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return [task_from_json(item) for item in payload]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return [task_from_json(item) for item in payload]
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Queue file is corrupt and could not be loaded: {exc}") from exc
 
 
 def preflight_task(task: TaskSpec) -> tuple[bool, str]:
@@ -142,9 +147,6 @@ def preflight_task(task: TaskSpec) -> tuple[bool, str]:
         if task.has_selected_files(detector):
             if count != expected:
                 problems.append(_file_count_problem(detector, count, task, selected=True))
-            missing = [path for path in task.detector_files(detector) if not path.exists()]
-            if missing:
-                problems.append(f"{detector}: {len(missing)} selected files missing")
         elif count == 0:
             problems.append(f"{detector}: no files")
         elif count < expected:

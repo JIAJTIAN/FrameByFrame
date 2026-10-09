@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 from matplotlib import colormaps
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-from PyQt5 import QtCore, QtGui, QtWidgets
 
 from aswaxs_live.reduction.frame_qc import (
     FrameSeries,
@@ -33,9 +33,9 @@ class _ProgressProxy:
 
 
 class FrameReductionWorker(QtCore.QThread):
-    completed = QtCore.pyqtSignal(object)
-    failed = QtCore.pyqtSignal(str)
-    progress = QtCore.pyqtSignal(str)
+    completed = Signal(object)
+    failed = Signal(str)
+    progress = Signal(str)
 
     def __init__(self, source: FrameSourceSeries, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)
@@ -83,15 +83,15 @@ class FrameStabilityWidget(QtWidgets.QWidget):
 
         self.group_combo = QtWidgets.QComboBox()
         self.group_combo.setMinimumWidth(260)
-        self.group_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.group_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
         self.group_combo.currentIndexChanged.connect(self._series_selection_changed)
         self.previous_series_button = QtWidgets.QToolButton()
-        self.previous_series_button.setArrowType(QtCore.Qt.LeftArrow)
+        self.previous_series_button.setArrowType(QtCore.Qt.ArrowType.LeftArrow)
         self.previous_series_button.setToolTip("Previous QC series (Alt+Left)")
         self.previous_series_button.setShortcut(QtGui.QKeySequence("Alt+Left"))
         self.previous_series_button.clicked.connect(lambda: self._browse_series(-1))
         self.next_series_button = QtWidgets.QToolButton()
-        self.next_series_button.setArrowType(QtCore.Qt.RightArrow)
+        self.next_series_button.setArrowType(QtCore.Qt.ArrowType.RightArrow)
         self.next_series_button.setToolTip("Next QC series (Alt+Right)")
         self.next_series_button.setShortcut(QtGui.QKeySequence("Alt+Right"))
         self.next_series_button.clicked.connect(lambda: self._browse_series(1))
@@ -103,14 +103,14 @@ class FrameStabilityWidget(QtWidgets.QWidget):
             self.controls_button.setText("QC Settings")
             self.controls_button.setCheckable(True)
             self.controls_button.setChecked(False)
-            self.controls_button.setArrowType(QtCore.Qt.RightArrow)
-            self.controls_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+            self.controls_button.setArrowType(QtCore.Qt.ArrowType.RightArrow)
+            self.controls_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             self.controls_button.toggled.connect(self._set_controls_visible)
             self.table_button = QtWidgets.QToolButton()
             self.table_button.setText("Frame Table")
             self.table_button.setCheckable(True)
             self.table_button.setChecked(False)
-            self.table_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+            self.table_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             self.table_button.toggled.connect(self._set_table_visible)
             compact_bar.addWidget(QtWidgets.QLabel("Series"))
             compact_bar.addWidget(self.previous_series_button)
@@ -150,11 +150,11 @@ class FrameStabilityWidget(QtWidgets.QWidget):
         self.reference_combo.setMinimumWidth(210)
         self.run_button = QtWidgets.QPushButton("Reduce Frames and Run QC")
         self.run_button.setMinimumWidth(220)
-        self.run_button.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.run_button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
         self.run_button.clicked.connect(self.run_analysis)
         show_average = QtWidgets.QPushButton("Show Recommended Average")
         show_average.setMinimumWidth(220)
-        show_average.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        show_average.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
         show_average.clicked.connect(self.show_recommended_average)
         if not self.compact:
             primary_controls.addWidget(QtWidgets.QLabel("Series"))
@@ -171,20 +171,20 @@ class FrameStabilityWidget(QtWidgets.QWidget):
         action_controls.addWidget(show_average, 1)
         controls_root.addLayout(action_controls)
 
-        range_controls = QtWidgets.QHBoxLayout()
-        range_controls.setSpacing(8)
-        range_controls.addWidget(self.q_auto)
-        range_controls.addWidget(QtWidgets.QLabel("q minimum"))
-        range_controls.addWidget(self.q_min)
-        range_controls.addWidget(QtWidgets.QLabel("q maximum"))
-        range_controls.addWidget(self.q_max)
-        range_controls.addSpacing(24)
-        range_controls.addWidget(self.low_auto)
-        range_controls.addWidget(QtWidgets.QLabel("low-q minimum"))
-        range_controls.addWidget(self.low_min)
-        range_controls.addWidget(QtWidgets.QLabel("low-q maximum"))
-        range_controls.addWidget(self.low_max)
-        range_controls.addStretch(1)
+        range_controls = QtWidgets.QGridLayout()
+        range_controls.setHorizontalSpacing(8)
+        range_controls.setVerticalSpacing(4)
+        range_controls.addWidget(self.q_auto, 0, 0)
+        range_controls.addWidget(QtWidgets.QLabel("q minimum"), 0, 1)
+        range_controls.addWidget(self.q_min, 0, 2)
+        range_controls.addWidget(QtWidgets.QLabel("q maximum"), 0, 3)
+        range_controls.addWidget(self.q_max, 0, 4)
+        range_controls.addWidget(self.low_auto, 1, 0)
+        range_controls.addWidget(QtWidgets.QLabel("low-q minimum"), 1, 1)
+        range_controls.addWidget(self.low_min, 1, 2)
+        range_controls.addWidget(QtWidgets.QLabel("low-q maximum"), 1, 3)
+        range_controls.addWidget(self.low_max, 1, 4)
+        range_controls.setColumnStretch(5, 1)
         controls_root.addLayout(range_controls)
         self.q_auto.toggled.connect(self._update_range_controls)
         self.low_auto.toggled.connect(self._update_range_controls)
@@ -193,7 +193,7 @@ class FrameStabilityWidget(QtWidgets.QWidget):
         if self.compact:
             self.controls_widget.hide()
 
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         root.addWidget(splitter, 1)
         plot_panel = QtWidgets.QWidget()
         plot_layout = QtWidgets.QVBoxLayout(plot_panel)
@@ -210,8 +210,8 @@ class FrameStabilityWidget(QtWidgets.QWidget):
             ["Frame", "Q/Q1", "Low-q/Q1", "Reduced chi2", "CorMap p", "Run", "Rg", "I(0)", "q*", "FWHM", "QC"]
         )
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setStretchLastSection(True)
         splitter.addWidget(self.table)
         self.plot_table_splitter = splitter
@@ -230,7 +230,7 @@ class FrameStabilityWidget(QtWidgets.QWidget):
     def _set_controls_visible(self, visible: bool) -> None:
         self.controls_widget.setVisible(visible)
         if hasattr(self, "controls_button"):
-            self.controls_button.setArrowType(QtCore.Qt.DownArrow if visible else QtCore.Qt.RightArrow)
+            self.controls_button.setArrowType(QtCore.Qt.ArrowType.DownArrow if visible else QtCore.Qt.ArrowType.RightArrow)
 
     def _set_table_visible(self, visible: bool) -> None:
         if not hasattr(self, "table"):
@@ -548,11 +548,11 @@ class FrameStabilityWidget(QtWidgets.QWidget):
                 value = values[row]
                 text = str(int(value)) if column in {0, 5} else (f"{float(value):.6g}" if np.isfinite(value) else "-")
                 item = QtWidgets.QTableWidgetItem(text)
-                item.setTextAlignment(QtCore.Qt.AlignCenter)
+                item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, column, item)
             label = result.labels[row]
             item = QtWidgets.QTableWidgetItem(label)
-            item.setTextAlignment(QtCore.Qt.AlignCenter)
+            item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             color = {"Good": "#dff2e5", "Acceptable": "#fff3cd", "Bad": "#f8d7da"}[label]
             item.setBackground(QtGui.QColor(color))
             self.table.setItem(row, 10, item)
@@ -593,11 +593,11 @@ class FrameStabilityDialog(QtWidgets.QDialog):
         menu_bar = QtWidgets.QMenuBar(self)
         layout.setMenuBar(menu_bar)
         self.widget = FrameStabilityWidget(self, show_file_controls=False)
-        file_menu = menu_bar.addMenu("File")
-        file_menu.addAction("Open Analysis HDF5...", self.widget.browse_file, QtGui.QKeySequence.Open)
-        file_menu.addAction("Reload", self.widget.load_file, QtGui.QKeySequence.Refresh)
+        file_menu = self.file_menu = menu_bar.addMenu("File")
+        file_menu.addAction("Open Analysis HDF5...", self.widget.browse_file, QtGui.QKeySequence.StandardKey.Open)
+        file_menu.addAction("Reload", self.widget.load_file, QtGui.QKeySequence.StandardKey.Refresh)
         file_menu.addSeparator()
-        file_menu.addAction("Close", self.close, QtGui.QKeySequence.Close)
+        file_menu.addAction("Close", self.close, QtGui.QKeySequence.StandardKey.Close)
         layout.addWidget(self.widget)
         fit_window_to_available_screen(self, (1500, 960), minimum=(860, 620))
 

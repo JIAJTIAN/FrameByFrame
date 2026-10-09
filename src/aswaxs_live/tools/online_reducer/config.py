@@ -10,6 +10,10 @@ class OnlineConfig:
     sample_name: str = "online_aswaxs"
     saxs_endpoint: str = "tcp://164.54.169.92:5551"
     waxs_endpoint: str = "tcp://164.54.169.92:5552"
+    saxs_detector_name: str = "Pil300K"
+    waxs_detector_name: str = "Eig1M"
+    remote_path_prefix: str = ""
+    local_path_prefix: str = ""
     pil300k_poni: str = ""
     pil300k_mask: str = ""
     eig1m_poni: str = ""
@@ -23,12 +27,17 @@ class OnlineConfig:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        tmp.replace(path)
 
     @classmethod
     def load(cls, path: Path) -> "OnlineConfig":
         if not path.is_file():
             return cls()
-        values = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            values = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return cls()
         known = cls.__dataclass_fields__
         return cls(**{key: value for key, value in values.items() if key in known})

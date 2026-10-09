@@ -59,6 +59,7 @@ def test_exported_edf_carries_h5_metadata_header(tmp_path: Path):
 def test_pyfai_integrate_env_forces_software_gl():
     env = _pyfai_qt_env(force_software_gl=True)
 
+    assert env["QT_API"] == "pyqt5"
     assert env["QT_OPENGL"] == "software"
     assert env["LIBGL_ALWAYS_SOFTWARE"] == "1"
     assert env["QT_XCB_GL_INTEGRATION"] == "none"

@@ -1,7 +1,7 @@
 # Project Structure
 
 ```text
-ASWAXS_reduction_pipeline_v5/
+ASWAXS_reduction_pipeline_v6/
   README.md
   pyproject.toml
   run_gui.py

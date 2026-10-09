@@ -1,8 +1,8 @@
-"""Shared visual styling for the v5 scientific tool windows."""
+"""Shared visual styling for the v6 scientific tool windows."""
 
 from __future__ import annotations
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from aswaxs_live.app.qt import QtCore, QtGui, QtWidgets, Signal, Slot
 
 
 PROFESSIONAL_TOOL_STYLESHEET = """
@@ -12,6 +12,10 @@ QDialog, QMainWindow {
 QWidget {
     color: #20242a;
     font-size: 9pt;
+}
+QLabel {
+    color: #20242a;
+    background: transparent;
 }
 QGroupBox {
     background: #ffffff;
@@ -38,6 +42,50 @@ QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus,
 QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
     border-color: #2f6fae;
+}
+QSpinBox, QDoubleSpinBox {
+    padding-right: 20px;
+}
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 20px;
+    border-left: 1px solid #b9c0ca;
+    border-bottom: 1px solid #d0d4da;
+    border-top-right-radius: 2px;
+    background: #f0f2f5;
+}
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover {
+    background: #dce8f5;
+    border-left-color: #6f9ac8;
+}
+QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed {
+    background: #c5dcf0;
+}
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 20px;
+    border-left: 1px solid #b9c0ca;
+    border-bottom-right-radius: 2px;
+    background: #f0f2f5;
+}
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+    background: #dce8f5;
+    border-left-color: #6f9ac8;
+}
+QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {
+    background: #c5dcf0;
+}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+    image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='4'><path d='M0 4L3 0L6 4Z' fill='%23505862'/></svg>");
+    width: 6px;
+    height: 4px;
+}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+    image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='4'><path d='M0 0L3 4L6 0Z' fill='%23505862'/></svg>");
+    width: 6px;
+    height: 4px;
 }
 QPushButton {
     background: #f8f9fb;

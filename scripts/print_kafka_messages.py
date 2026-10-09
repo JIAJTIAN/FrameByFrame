@@ -15,7 +15,7 @@ from typing import Any
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Print live raw Kafka messages from a topic.")
     parser.add_argument("--bootstrap-servers", default="164.54.169.92:9092")
-    parser.add_argument("--topic", default="asaxs.frames")
+    parser.add_argument("--topic", default="bluesky_aswaxs")
     parser.add_argument("--group-id", default="aswaxs-v3-debug-printer")
     parser.add_argument("--timeout-ms", type=int, default=30000, help="Stop if no message arrives in this time.")
     parser.add_argument("--max-messages", type=int, default=0, help="0 means run until timeout/interrupted.")

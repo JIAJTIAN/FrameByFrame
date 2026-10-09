@@ -3,16 +3,25 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import h5py
-from PyQt5 import QtCore, QtWidgets
+from aswaxs_live.app.qt import QtCore, QtWidgets
 
 from aswaxs_live.app import dashboard
 from aswaxs_live.workflows.queue import TaskSpec
 
 
+_APP: QtWidgets.QApplication | None = None
+
+
+def _app() -> QtWidgets.QApplication:
+    global _APP
+    _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    return _APP
+
+
 def test_task_builder_uses_guided_pages(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(dashboard, "BUILDER_SETTINGS_PATH", tmp_path / "builder.json")
     monkeypatch.setattr(dashboard, "DEFAULT_QUEUE_PATH", tmp_path / "queue.json")
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _app()
     window = dashboard.DashboardWindow()
     window.show()
     window.tabs.setCurrentIndex(0)
@@ -61,7 +70,7 @@ def test_task_builder_uses_guided_pages(tmp_path, monkeypatch) -> None:
 def test_toolbar_does_not_bypass_wizard(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(dashboard, "BUILDER_SETTINGS_PATH", tmp_path / "builder.json")
     monkeypatch.setattr(dashboard, "DEFAULT_QUEUE_PATH", tmp_path / "queue.json")
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _app()
     window = dashboard.DashboardWindow()
 
     queue_toolbar = next(toolbar for toolbar in window.findChildren(QtWidgets.QToolBar) if toolbar.windowTitle() == "Queue")
@@ -72,7 +81,7 @@ def test_toolbar_does_not_bypass_wizard(tmp_path, monkeypatch) -> None:
 def test_task_builder_step_buttons_jump_directly(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(dashboard, "BUILDER_SETTINGS_PATH", tmp_path / "builder.json")
     monkeypatch.setattr(dashboard, "DEFAULT_QUEUE_PATH", tmp_path / "queue.json")
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _app()
     window = dashboard.DashboardWindow()
     sample_folder = tmp_path / "direct_jump_sample"
     window.raw_folder_edit.setText(str(sample_folder))
@@ -96,7 +105,7 @@ def test_task_builder_step_buttons_jump_directly(tmp_path, monkeypatch) -> None:
 def test_needs_attention_tooltip_shows_validation_reasons(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(dashboard, "BUILDER_SETTINGS_PATH", tmp_path / "builder.json")
     monkeypatch.setattr(dashboard, "DEFAULT_QUEUE_PATH", tmp_path / "queue.json")
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _app()
     window = dashboard.DashboardWindow()
     task = TaskSpec(
         task_name="bad_task",
@@ -136,7 +145,7 @@ def test_sequence_step_auto_scans_monitor_pvs(tmp_path, monkeypatch) -> None:
     with h5py.File(eig / "eig_0001.h5", "w") as handle:
         handle.create_dataset("/entry/instrument/NDAttributes/OLD_WPDS", data=1.0)
 
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _app()
     window = dashboard.DashboardWindow()
     window.raw_folder_edit.setText(str(raw))
     for _step in range(2):
@@ -156,7 +165,7 @@ def test_sequence_step_auto_scans_monitor_pvs(tmp_path, monkeypatch) -> None:
 def test_raw_file_lists_show_names_but_retain_complete_paths(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(dashboard, "BUILDER_SETTINGS_PATH", tmp_path / "builder.json")
     monkeypatch.setattr(dashboard, "DEFAULT_QUEUE_PATH", tmp_path / "queue.json")
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _app()
     window = dashboard.DashboardWindow()
     paths = [str(tmp_path / "sample" / "Pil300K" / f"frame_{index:05d}.h5") for index in range(1000)]
 
@@ -174,7 +183,7 @@ def test_raw_file_lists_show_names_but_retain_complete_paths(tmp_path, monkeypat
 def test_compact_dashboard_drawers_and_single_detector_panels(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(dashboard, "BUILDER_SETTINGS_PATH", tmp_path / "builder.json")
     monkeypatch.setattr(dashboard, "DEFAULT_QUEUE_PATH", tmp_path / "queue.json")
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _app()
     window = dashboard.DashboardWindow()
     window.show()
     window.tabs.setCurrentIndex(1)
@@ -202,7 +211,7 @@ def test_compact_dashboard_drawers_and_single_detector_panels(tmp_path, monkeypa
 def test_sequence_summary_and_navigation_follow_selected_mode(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(dashboard, "BUILDER_SETTINGS_PATH", tmp_path / "builder.json")
     monkeypatch.setattr(dashboard, "DEFAULT_QUEUE_PATH", tmp_path / "queue.json")
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _app()
     window = dashboard.DashboardWindow()
     window.energy_spin.setValue(20)
     window.group_spin.setValue(6)
