@@ -23,6 +23,12 @@ DEFAULT_V6_ROOT = Path(__file__).resolve().parents[4]
 ONLINE_MAX_MEASUREMENTS = 1_000_000
 
 
+def _azim_avg_filename(title: str, detector: str, scan_id: str) -> str:
+    """Build the canonical Extracted filename for an online-reduced HDF5."""
+    parts = [p for p in (title, f"S{scan_id}" if scan_id else "", detector) if p]
+    return "_".join(parts) + "_azim_avg.h5"
+
+
 def ensure_v6_importable(v6_root: Path = DEFAULT_V6_ROOT) -> Path:
     src = v6_root.resolve() / "src"
     engine_path = src / "aswaxs_live" / "reduction" / "live.py"
@@ -37,6 +43,7 @@ def ensure_v6_importable(v6_root: Path = DEFAULT_V6_ROOT) -> Path:
 class DetectorRuntime:
     identity: ExperimentIdentity
     detector: str
+    detector_dir: Path
     assigner: object
     state: object
     event_log: TextIO
@@ -52,6 +59,7 @@ class OnlineReductionEngine(QtCore.QObject):
     experiment_discovered = Signal(object)
     output_updated = Signal(str)
     plan_exported = Signal(str, list)  # detector, list[str] of canonical paths written
+    detector_reset = Signal(str)       # detector key — emitted when a new plan clears old frames
     error = Signal(str)
     ready = Signal()
     stopped = Signal()
@@ -63,6 +71,7 @@ class OnlineReductionEngine(QtCore.QObject):
         self.v6_root = v6_root
         self._runtimes: dict[tuple[str, str], DetectorRuntime] = {}
         self._announced_experiments: set[str] = set()
+        self._current_scan_ids: dict[str, str] = {}
         self._active = False
         self._reducer = None
         self._core = None
@@ -85,7 +94,9 @@ class OnlineReductionEngine(QtCore.QObject):
     def _make_runtime(self, identity: ExperimentIdentity, detector: str) -> DetectorRuntime:
         reducer = self._reducer
         experiment_dir = self.session_dir / identity.storage_name
-        detector_dir = experiment_dir / detector
+        scan_id = self._current_scan_ids.get(detector, "")
+        plan_subdir = f"S{scan_id}" if scan_id else "current"
+        detector_dir = experiment_dir / plan_subdir / detector
         detector_dir.mkdir(parents=True, exist_ok=True)
         args = self._runtime_args(detector, detector_dir, identity.safe_title)
         analysis_path = reducer.prepare_output_records_for_run(args, detector_dir)
@@ -137,7 +148,7 @@ class OnlineReductionEngine(QtCore.QObject):
             "expected_frames_per_group": int(self.config.num_frames),
             "sequence_mode": "open-ended measurements; energy read from raw HDF5 metadata",
         }
-        return DetectorRuntime(identity, detector, assigner, state, event_log, set(seen), checkpoint_parameters)
+        return DetectorRuntime(identity, detector, detector_dir, assigner, state, event_log, set(seen), checkpoint_parameters)
 
     def _runtime_args(self, detector: str, output_dir: Path, sample_name: str) -> argparse.Namespace:
         cfg = self.config
@@ -316,9 +327,11 @@ class OnlineReductionEngine(QtCore.QObject):
             return
         root = self.session_dir / identity.storage_name
         combined = root / f"{identity.safe_title}_analysis.h5"
+        pil_dir = self._runtimes[(identity.experiment_uid, "Pil300K")].detector_dir
+        eig_dir = self._runtimes[(identity.experiment_uid, "Eig1M")].detector_dir
         updated = update_live_stitched_averages(
-            root / "Pil300K",
-            root / "Eig1M",
+            pil_dir,
+            eig_dir,
             combined_h5_path=combined,
             sample_names=[identity.safe_title],
         )
@@ -354,8 +367,28 @@ class OnlineReductionEngine(QtCore.QObject):
         self.log.emit(f"{identity.title}: updated stitched 1-D detector averages -> {combined.name}")
         self.output_updated.emit(str(combined))
 
-    @Slot(str)
-    def finalize_plan(self, detector: str) -> None:
+    @Slot(str, str)
+    def reset_detector(self, detector: str, scan_id: str = "") -> None:
+        """Drop all runtimes for *detector* and record the new scan_id.
+
+        Called when the Bluesky ZMQ stream emits a ``start`` document so that
+        each plan begins with a clean frame list in its own session subdirectory.
+        """
+        self._current_scan_ids[detector] = scan_id
+        stale = [key for key in self._runtimes if key[1] == detector]
+        for key in stale:
+            runtime = self._runtimes.pop(key)
+            try:
+                runtime.state.write_analysis_h5(force=True)
+            except Exception:
+                pass
+            runtime.event_log.close()
+        if stale:
+            self.log.emit(f"{detector}: new plan S{scan_id} — previous frame list cleared")
+        self.detector_reset.emit(detector)
+
+    @Slot(str, str)
+    def finalize_plan(self, detector: str, scan_id: str = "") -> None:
         """Flush all open runtimes for *detector*, write final checkpoints, and
         copy the analysis HDF5 files to each experiment's canonical Extracted folder.
 
@@ -374,7 +407,8 @@ class OnlineReductionEngine(QtCore.QObject):
                 src = runtime.state.analysis_path
                 dst_dir = runtime.identity.canonical_output_root / detector
                 dst_dir.mkdir(parents=True, exist_ok=True)
-                dst = dst_dir / src.name
+                dst_name = _azim_avg_filename(runtime.identity.safe_title, detector, scan_id)
+                dst = dst_dir / dst_name
                 shutil.copy2(src, dst)
                 written.append(str(dst))
                 self.log.emit(
@@ -386,15 +420,13 @@ class OnlineReductionEngine(QtCore.QObject):
 
         for identity in identities_to_stitch.values():
             try:
+                # Update the in-session combined file for live display only.
+                # It is intentionally NOT exported to Extracted so the offline
+                # pipeline performs its own authoritative stitch after proper
+                # frame averaging.
                 self._update_stitching(identity, final=True)
-                # Also copy the combined stitching file if it was produced.
-                combined_src = self.session_dir / identity.storage_name / f"{identity.safe_title}_analysis.h5"
-                if combined_src.is_file():
-                    combined_dst = identity.canonical_output_root / combined_src.name
-                    shutil.copy2(combined_src, combined_dst)
-                    written.append(str(combined_dst))
             except Exception as exc:
-                self.error.emit(f"{identity.title}: stitching/export failed: {exc}")
+                self.error.emit(f"{identity.title}: stitching update failed: {exc}")
 
         if written:
             self.plan_exported.emit(detector, written)

@@ -259,16 +259,15 @@ def test_engine_finalize_plan_exports_to_extracted(tmp_path: Path) -> None:
         nd.create_dataset("SPDS", data=100.0)
 
     engine.process_file("Pil300K", str(raw), {"image_path": str(raw), "experiment_title": "Experiment", "experiment_uid": "uid-e"})
-    engine.finalize_plan("Pil300K")
+    engine.finalize_plan("Pil300K", "42")
     engine.shutdown()
 
     assert not errors
     assert exported, "plan_exported signal not emitted"
-    # Canonical location: {raw.parent.parent.parent}/Extracted/{raw.parent.parent.name}/Pil300K/*.h5
     extracted_dir = tmp_path / "Extracted" / "Experiment" / "Pil300K"
-    exported_files = list(extracted_dir.glob("*.h5"))
-    assert exported_files, f"no HDF5 in {extracted_dir}"
-    # The exported HDF5 must have the live-frame table so the offline pipeline can resume.
+    exported_files = list(extracted_dir.glob("*_azim_avg.h5"))
+    assert exported_files, f"no azim_avg HDF5 in {extracted_dir}"
+    assert "S42" in exported_files[0].name
     with h5py.File(exported_files[0], "r") as fh:
         assert "/entry/realtime/process_01_reduction/frames" in fh
 
@@ -334,7 +333,7 @@ def test_online_engine_routes_experiments_to_separate_h5_checkpoints(tmp_path: P
     )
 
     runtime_paths = [runtime.state.analysis_path for runtime in engine._runtimes.values()]
-    combined = next((tmp_path / "session").glob("*/Run_A_analysis.h5"))
+    combined = next((tmp_path / "session").glob("**/Run_A_analysis.h5"))
     engine.shutdown()
     try:
         assert not errors

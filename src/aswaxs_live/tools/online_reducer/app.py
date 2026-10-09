@@ -55,9 +55,10 @@ def export_experiments_to_canonical(
 
 class MainWindow(QtWidgets.QMainWindow):
     enqueue_file = Signal(str, str, object)
-    # Forwarded through the main-thread event queue so finalize_plan reaches
-    # engine_thread only after all prior enqueue_file events have been posted.
-    _forward_plan_stopped = Signal(str)
+    # Both forwarded through the main-thread event queue so they arrive at
+    # engine_thread in FIFO order relative to enqueue_file events.
+    _forward_plan_started = Signal(str, str)  # detector, scan_id
+    _forward_plan_stopped = Signal(str, str)  # detector, scan_id
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -65,7 +66,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.config = OnlineConfig.load(SETTINGS_PATH)
         self._temporary_session = tempfile.TemporaryDirectory(prefix="framebyframe_online_1d_")
         self.session_dir = Path(self._temporary_session.name).resolve()
-        self._session_outputs: set[Path] = set()
         self._experiments: dict[str, dict[str, str]] = {}
         self.receiver_thread = None
         self.receiver = None
@@ -194,10 +194,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.start_button = QtWidgets.QPushButton("Start Online 1-D Reduction")
         self.start_button.setMinimumHeight(38)
         self.stop_button = QtWidgets.QPushButton("Stop")
-        self.export_button = QtWidgets.QPushButton("Export to Extracted")
-        self.export_button.setToolTip("Save each experiment's HDF5 checkpoints using the local reducer's Extracted-folder convention.")
         action_row.addWidget(self.start_button); action_row.addWidget(self.stop_button)
-        action_row.addWidget(self.export_button); action_row.addStretch(1)
+        action_row.addStretch(1)
         right_layout.addLayout(action_row)
 
         self.analysis_workspace = OnlineAnalysisWorkspace(self)
@@ -237,7 +235,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.apply_setup_button.clicked.connect(self.apply_setup_and_hide)
         self.start_button.clicked.connect(self.start)
         self.stop_button.clicked.connect(self.stop)
-        self.export_button.clicked.connect(self.export_session_h5)
         self.log_button.toggled.connect(self._set_log_visible)
         self.setup_scroll.hide()
         self.main_splitter.setSizes([0, 1200])
@@ -250,8 +247,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         file_menu = self.file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(self.setup_action)
-        file_menu.addSeparator()
-        file_menu.addAction("Export Analysis HDF5...", self.export_session_h5)
         file_menu.addSeparator()
         file_menu.addAction("Close", self.close, QtGui.QKeySequence.StandardKey.Close)
 
@@ -349,9 +344,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.engine.curve_ready.connect(self.analysis_workspace.add_curve)
         self.engine.image_ready.connect(self.analysis_workspace.update_detector_image)
         self.engine.experiment_discovered.connect(self._on_experiment_discovered)
-        self.engine.output_updated.connect(self._on_output_updated)
         self.engine.plan_exported.connect(self._on_plan_exported)
+        self.engine.detector_reset.connect(self.analysis_workspace.clear_detector)
         self.engine.ready.connect(self._start_receiver); self.enqueue_file.connect(self.engine.process_file)
+        self._forward_plan_started.connect(self.engine.reset_detector)
         self._forward_plan_stopped.connect(self.engine.finalize_plan)
         self.engine.stopped.connect(self.engine_thread.quit); self.engine_thread.finished.connect(self._on_engine_stopped)
         self.engine_thread.start(); self._set_running(True)
@@ -374,6 +370,7 @@ class MainWindow(QtWidgets.QMainWindow):
             local_path_prefix=self.config.local_path_prefix,
         )
         self.receiver.moveToThread(self.receiver_thread); self.receiver_thread.started.connect(self.receiver.run)
+        self.receiver.plan_started.connect(self._forward_plan_started)
         self.receiver.plan_stopped.connect(self._forward_plan_stopped)
         self.receiver.image_received.connect(self.enqueue_file)
         self.receiver.image_received.connect(self._log_received_message)
@@ -403,15 +400,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_running(self, running: bool) -> None:
         self.start_button.setEnabled(not running); self.stop_button.setEnabled(running); self.config_panel.setEnabled(not running)
         self.start_action.setEnabled(not running)
-        self.export_button.setEnabled(not running and bool(self._available_session_h5()))
         self.setup_action.setToolTip(
             "Show setup values (read-only while reduction is running)."
             if running else "Show or hide acquisition and detector settings."
         )
         if not running: self.status_label.setText("Stopped")
-
-    def _on_output_updated(self, path_text: str) -> None:
-        self._session_outputs.add(Path(path_text).resolve())
 
     def _on_plan_exported(self, detector: str, paths: list) -> None:
         label = "SAXS" if detector == "Pil300K" else "WAXS"
@@ -429,20 +422,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_label.setText(
             f"Experiment detected: {values['experiment_title']} [{values['experiment_uid'][:8]}]"
         )
-
-    def _available_session_h5(self) -> list[Path]:
-        return sorted(path for path in self.session_dir.rglob("*.h5") if path.is_file())
-
-    def export_session_h5(self) -> None:
-        if not self._experiments or not self._available_session_h5():
-            QtWidgets.QMessageBox.information(self, "Nothing to export", "No temporary analysis HDF5 files are available yet.")
-            return
-        written = export_experiments_to_canonical(self.session_dir, list(self._experiments.values()))
-        destinations = sorted({str(path.parent) for path in written})
-        self.status_label.setText(
-            f"Exported {len(written)} checkpoint HDF5 file(s) to local Extracted storage."
-        )
-        self._append_log("Exported checkpoints:\n" + "\n".join(destinations))
 
     def export_session_h5_to(self, destination: Path) -> Path:
         return export_temporary_analysis_h5(self.session_dir, destination, self.config.sample_name)

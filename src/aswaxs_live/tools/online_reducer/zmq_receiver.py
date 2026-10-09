@@ -98,7 +98,8 @@ def parse_zmq_message(raw: bytes | str) -> tuple[str, dict] | None:
 class ZmqReceiver(QtCore.QObject):
     image_received = Signal(str, str, object)
     message_stats = Signal(str, int, str)
-    plan_stopped = Signal(str)  # detector key
+    plan_started = Signal(str, str)  # detector key, scan_id
+    plan_stopped = Signal(str, str)  # detector key, scan_id
     status = Signal(str)
     error = Signal(str)
     stopped = Signal()
@@ -120,6 +121,7 @@ class ZmqReceiver(QtCore.QObject):
         self.remote_path_prefix = remote_path_prefix.rstrip("/\\")
         self.local_path_prefix = local_path_prefix.rstrip("/\\")
         self._running = False
+        self._current_scan_id: dict[str, str] = {}
 
     def _apply_path_prefix(self, path_str: str) -> Path:
         """Replace a server-side posix prefix with the local mount path."""
@@ -164,12 +166,14 @@ class ZmqReceiver(QtCore.QObject):
                         doc_type, doc_body = result
 
                         if doc_type == "start":
-                            scan_id = doc_body.get("scan_id", "?")
+                            scan_id = str(doc_body.get("scan_id", ""))
+                            self._current_scan_id[detector] = scan_id
                             plan = doc_body.get("plan_name", "?")
                             dets = doc_body.get("detectors", [])
                             self.status.emit(
                                 f"Scan {scan_id} started — plan={plan}, detectors={dets}"
                             )
+                            self.plan_started.emit(detector, scan_id)
 
                         elif doc_type == "stop":
                             exit_status = doc_body.get("exit_status", "?")
@@ -177,7 +181,8 @@ class ZmqReceiver(QtCore.QObject):
                             self.status.emit(
                                 f"Scan stopped — status={exit_status}, events={num_events}"
                             )
-                            self.plan_stopped.emit(detector)
+                            scan_id = self._current_scan_id.pop(detector, "")
+                            self.plan_stopped.emit(detector, scan_id)
 
                         elif doc_type in ("event", "event_page"):
                             bluesky_name = self.bluesky_names.get(detector, detector)

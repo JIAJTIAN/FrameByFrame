@@ -126,6 +126,13 @@ class OnlineAnalysisWorkspace(QtWidgets.QWidget):
         layout.addWidget(canvas, 1)
         return page
 
+    @Slot(str)
+    def clear_detector(self, detector: str) -> None:
+        """Clear the curve list and store when a new plan starts for *detector*."""
+        self.store.clear()
+        self.curve_list.clear()
+        self.selection_status.setText(f"New plan started ({detector}) — waiting for reduced curves.")
+
     @Slot(object)
     def add_curve(self, payload: object) -> None:
         record = self.store.add_payload(dict(payload))

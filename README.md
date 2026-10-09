@@ -4,6 +4,24 @@
 
 ---
 
+## Installation
+
+Clone the repository and install into your conda environment with an editable install:
+
+```bash
+pip install -e .
+```
+
+Then launch the application with:
+
+```bash
+framebyframe-aswaxs
+```
+
+All wizard settings are persisted automatically between sessions.
+
+---
+
 ## End-to-End Workflow
 
 ```mermaid
@@ -34,16 +52,6 @@ flowchart TD
     H5S --> V["HDF5 I-q Viewer\nFrame overlays · QC reports · Heatmaps"]
     H5A --> V
 ```
-
----
-
-## Starting the Application
-
-```
-framebyframe-aswaxs
-```
-
-The application opens on the **Task Queue** tab. All wizard settings are persisted automatically between sessions.
 
 ---
 
@@ -232,17 +240,7 @@ Browses the internal tree of any HDF5 file — datasets, attributes, shapes, and
 
 ### pyFAI PONI / Mask Setup
 
-Launches the pyFAI calibration workflow directly from the GUI.
-
-```
-Workflow:
-  1. Load an HDF5 calibrant image (e.g. AgBH)
-  2. Export EDF bridge file
-  3. Launch pyFAI-calib2 → save .poni
-  4. Launch pyFAI-drawmask → import and save mask
-```
-
-Calibration files produced here are used directly in Step 4 of the task builder.
+Launches the pyFAI calibration workflow directly from the GUI. Load a calibrant image (e.g. AgBH), run the geometry fit, then draw and save a pixel mask. Calibration files produced here are used directly in Step 4 of the task builder.
 
 ### Online 1-D Reducer
 
