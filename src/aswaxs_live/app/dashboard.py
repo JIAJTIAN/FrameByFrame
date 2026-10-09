@@ -37,6 +37,7 @@ from aswaxs_live.tools.rack_builder import RackBuilderDialog
 from aswaxs_live.tools.linkers.sample_position import SamplePositionBridgeError, launch_sample_position_app
 from aswaxs_live.tools.linkers.xanos import XAnoSLinkerError as XAnoSBridgeError, open_xanos_components_window
 from aswaxs_live.tools.linkers.xmodfit import XModFitLinkerError, launch_xmodfit
+from aswaxs_live.app.setup_dialog import ExternalToolsSetupDialog, load_external_tool_paths
 from aswaxs_live.paths import PROJECT_DIR
 from aswaxs_live.workflows.queue import (
     DEFAULT_QUEUE_PATH,
@@ -1100,6 +1101,9 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self.send_to_xanos_action.triggered.connect(self.send_selected_task_to_xanos)
         self.frame_stability_help_action = QtGui.QAction("Frame Stability QC Guide", self)
         self.frame_stability_help_action.triggered.connect(self.open_frame_stability_help)
+        self.setup_action = QtGui.QAction("Setup…", self)
+        self.setup_action.triggered.connect(self.open_setup)
+
     def _build_menus(self) -> None:
         menu = self.menuBar()
         file_menu = self.file_menu = menu.addMenu("File")
@@ -1146,6 +1150,9 @@ class DashboardWindow(QtWidgets.QMainWindow):
         tools_menu.addAction(self.sample_position_action)
         tools_menu.addSeparator()
         tools_menu.addAction(self.pyfai_setup_action)
+
+        setup_menu = self.setup_menu = menu.addMenu("Setup")
+        setup_menu.addAction(self.setup_action)
 
         help_menu = self.help_menu = menu.addMenu("Help")
         help_menu.addAction(self.frame_stability_help_action)
@@ -3691,9 +3698,14 @@ class DashboardWindow(QtWidgets.QMainWindow):
                 f"The sample-position / pair-planning tool could not start.\n\n{exc}",
             )
 
+    def open_setup(self) -> None:
+        dlg = ExternalToolsSetupDialog(self)
+        dlg.exec()
+
     def open_xmodfit(self) -> None:
+        _, xmodfit_path = load_external_tool_paths()
         try:
-            process = launch_xmodfit()
+            process = launch_xmodfit(path=xmodfit_path or None)
             self.xmodfit_processes = [
                 item for item in self.xmodfit_processes if getattr(item, "poll", lambda: 0)() is None
             ]
@@ -3755,8 +3767,11 @@ class DashboardWindow(QtWidgets.QMainWindow):
         self._open_xanos_components_window(data_files)
 
     def _open_xanos_components_window(self, data_files: list[Path]) -> None:
+        xanos_path, _ = load_external_tool_paths()
         try:
-            self.xanos_components_window = open_xanos_components_window(data_files)
+            self.xanos_components_window = open_xanos_components_window(
+                data_files, script_path=xanos_path or None
+            )
         except XAnoSBridgeError as exc:
             QtWidgets.QMessageBox.critical(self, "Cannot Open XAnoS Components", str(exc))
         except Exception as exc:  # noqa: BLE001 - keep dashboard alive if optional tool fails.
